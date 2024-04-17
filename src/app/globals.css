@@ -7,7 +7,7 @@
 		--background: 48, 8%, 88%; /* CHANGED */
 		--foreground: 222.2 84% 4.9%;
 
-		/* CLASSES ADDED  */
+		/* CLASSES ADDED BY US */
 		--container: 0 0 100%;
 		--left-panel: 203, 32%, 10%;
 
@@ -19,7 +19,7 @@
 
 		--green-primary: 167, 100%, 33%;
 		--green-chat: 111, 91%, 91%;
-		/* CLASSES ADDED  */
+		/* CLASSES ADDED BY US */
 
 		--card: 0 0% 100%;
 		--card-foreground: 222.2 84% 4.9%;
@@ -53,7 +53,7 @@
 		--background: 202, 31%, 7%; /* CHANGED */
 		--foreground: 210 40% 98%;
 
-		/* CLASSES ADDED  */
+		/* CLASSES ADDED BY US: */
 		--container: 202, 31%, 7%;
 
 		--gray-primary: 202, 23%, 16%;
@@ -67,7 +67,7 @@
 		--green-chat: 169, 100%, 18%;
 
 		--gray-tertiary: 203, 22%, 21%;
-		/* CLASSES ADDED  */
+		/* CLASSES ADDED BY US */
 
 		--card: 222.2 84% 4.9%;
 		--card-foreground: 210 40% 98%;
@@ -105,7 +105,7 @@
 	}
 }
 
-/*  ADDED => DARK MODE THIN SCROLLBAR */
+/* WE ADDED => DARK MODE THIN SCROLLBAR */
 @layer components {
 	::-webkit-scrollbar {
 		width: 8px;
