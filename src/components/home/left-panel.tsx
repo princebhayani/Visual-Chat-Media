@@ -1,9 +1,10 @@
-import { ListFilter, LogOut, MessageSquareDiff, Search, User } from "lucide-react";
+import { ListFilter, Search} from "lucide-react";
 import { Input } from "../ui/input";
 import ThemeSwitch from "./theme-switch";
 import { conversations } from "@/dummy-data/db";
 import Conversation from "./conversation";
 import { UserButton } from "@clerk/nextjs";
+import UserListDialog from "./user-list-dialog";
 
 const LeftPanel = () => {
 	
@@ -15,7 +16,7 @@ const LeftPanel = () => {
 				<div className='flex justify-between bg-gray-primary p-3 items-center'>
 					{/* <User size={24} /> */}
 					<UserButton />
-
+					
 					{/* <SignedIn>
 						<SignOutButton />
 					</SignedIn>
@@ -25,7 +26,7 @@ const LeftPanel = () => {
 					</SignedOut> */}
 
 					<div className='flex items-center gap-3'>
-						<MessageSquareDiff size={20} /> {/* TODO: This line will be replaced with <UserListDialog /> */}
+						<UserListDialog />
 						<ThemeSwitch />
 						{/* <LogOut size={20} className='cursor-pointer' /> */}
 					</div>
