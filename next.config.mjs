@@ -1,16 +1,11 @@
 /** @type {import('next').NextConfig} */
+
 const nextConfig = {
 	images: {
-		remotePatterns: [{ hostname: "stoic-sturgeon-730.convex.cloud" },
-		{
-			protocol: 'http',
-			hostname: '',
-			port: '',
-			pathname: '',
-		},
+		remotePatterns: [
+			{ hostname: "stoic-sturgeon-730.convex.cloud" },
 		],
 	},
-	
 };
 
 export default nextConfig;
