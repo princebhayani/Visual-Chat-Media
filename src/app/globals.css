@@ -11,14 +11,14 @@
 		--container: 0 0 100%;
 		--left-panel: 203, 32%, 10%;
 
-		--gray-primary: 216, 20%, 95%;
-		--gray-secondary: 216, 20%, 95%;
-
+		--gray-primary: 210, 14%, 83%;
+		--gray-secondary: 333, 20%, 95%;
+		
 		--left-panel: 100, 100%, 100%;
 		--chat-hover: 180, 5%, 96%;
 
 		--green-primary: 167, 100%, 33%;
-		--green-chat: 111, 91%, 91%;
+		--green-chat: 210, 14%, 83%;
 		/* CLASSES ADDED BY US */
 
 		--card: 0 0% 100%;
@@ -56,17 +56,17 @@
 		/* CLASSES ADDED BY US: */
 		--container: 202, 31%, 7%;
 
-		--gray-primary: 202, 23%, 16%;
+		--gray-primary: 210, 10%, 23%;
 		--gray-secondary: 202, 22%, 17%;
 
-		--left-panel: 203, 32%, 10%;
-		--chat-hover: 202, 23%, 16%;
+		--left-panel: 210, 9%, 31%;
+		--chat-hover: 210, 11%, 25%;
 
-		--green-primary: 167, 100%, 33%;
-		--green-secondary: 165, 100%, 39%;
-		--green-chat: 169, 100%, 18%;
+		--green-primary: 186, 21%, 26%;
+		--green-secondary: 186, 21%, 26%;
+		--green-chat: 333, 45%, 37%;
 
-		--gray-tertiary: 203, 22%, 21%;
+		--gray-tertiary: 210, 10%, 19%;
 		/* CLASSES ADDED BY US */
 
 		--card: 222.2 84% 4.9%;

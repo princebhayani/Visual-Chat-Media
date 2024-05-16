@@ -21,7 +21,7 @@ const Conversation = ({ conversation }: { conversation: any }) => {
             <div className={`flex gap-2 items-center p-3 hover:bg-chat-hover cursor-pointer ${activeBgClass? "bg-gray-tertiary":""}`} onClick={()=> setSelectedConversation(conversation)}>
                 <Avatar className='border border-gray-900 overflow-visible relative'>
                     {conversation.isOnline && (
-                        <div className='absolute top-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-foreground' />
+                        <div className='absolute top-0 right-0 w-2.5 h-2.5 bg-pink-500 rounded-full border-2 border-foreground' />
                     )}
                     <AvatarImage src={conversationImage || "/placeholder.png"} className='object-cover rounded-full' />
                     <AvatarFallback>
@@ -35,7 +35,7 @@ const Conversation = ({ conversation }: { conversation: any }) => {
                             {formatDate(lastMessage?._creationTime || conversation._creationTime)}
                         </span>
                     </div>
-                    <p className='text-[12px] mt-1 text-gray-500 flex items-center gap-1 '>
+                    <p className='text-[12px] mt-1 text-gray-500 flex items-center gap-1' >
                         {lastMessage?.sender === me?._id ? <MessageSeenSvg /> : ""}
                         {conversation.isGroup && <Users size={16} />}
                         {!lastMessage && "Say Hi!"}

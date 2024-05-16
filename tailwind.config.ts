@@ -52,6 +52,8 @@ const config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        green: "#E0FBFC", // Changed from "green" to "#E0FBFC"
+        gray: "#98C1D9", // Changed from "gray" to "#98C1D9"
       },
       backgroundColor: {
         container: "hsl(var(--container))",
@@ -60,7 +62,7 @@ const config = {
         "gray-tertiary": "hsl(var(--gray-tertiary))",
         "left-panel": "hsl(var(--left-panel))",
         "chat-hover": "hsl(var(--chat-hover))",
-        "green-primary": "hsl(var(--green-primary))",
+        "blue-primary": "hsl(var(--blue-primary))",
         "green-secondary": "hsl(var(--green-secondary))",
         "green-chat": "hsl(var(--green-chat))",
       },
