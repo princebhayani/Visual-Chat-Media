@@ -14,6 +14,8 @@ interface PeerConnection {
 	userId: string;
 	videoElement: HTMLVideoElement | HTMLElement; // Can be video element or container
 	audioElement?: HTMLAudioElement; // Audio element for audio calls
+	remoteVideoStream?: MediaStream; // Stream for remote video tracks
+	remoteAudioStream?: MediaStream; // Stream for remote audio tracks
 }
 
 export function getUrlParams(url = window.location.href) {
@@ -223,55 +225,107 @@ export default function VideoCallRoom() {
 			peersContainerRef.current.appendChild(container);
 		}
 
+		// Create streams for remote media
+		const remoteVideoStream = new MediaStream();
+		const remoteAudioStream = new MediaStream();
+		
 		// Handle remote stream - properly handle both video and audio tracks
 		peerConnection.ontrack = (event) => {
-			console.log("📹 Received remote track:", event.track.kind, event.streams);
+			console.log("📹 Received remote track:", event.track.kind, "from stream:", event.streams.length > 0 ? event.streams[0].id : "no stream", "track id:", event.track.id);
 			
-			if (event.streams && event.streams.length > 0) {
-				const remoteStream = event.streams[0];
+			const track = event.track;
+			
+			// Handle video track
+			if (track.kind === "video" && callType === "video") {
+				// Stop any existing video track
+				if (remoteVideoStream.getVideoTracks().length > 0) {
+					const oldTrack = remoteVideoStream.getVideoTracks()[0];
+					oldTrack.stop();
+					remoteVideoStream.removeTrack(oldTrack);
+				}
+				// Add new video track
+				remoteVideoStream.addTrack(track);
+				videoElement.srcObject = remoteVideoStream;
+				console.log("✅ Added remote video track to stream, total tracks:", remoteVideoStream.getTracks().length);
 				
-				// Handle video track
-				if (callType === "video" && event.track.kind === "video") {
-					videoElement.srcObject = remoteStream;
-					console.log("✅ Set remote video stream");
+				// Handle track ended
+				track.onended = () => {
+					console.log("Remote video track ended");
+					remoteVideoStream.removeTrack(track);
+					if (remoteVideoStream.getTracks().length === 0) {
+						videoElement.srcObject = null;
+					}
+				};
+			}
+			
+			// Always handle audio track (for both video and audio calls)
+			if (track.kind === "audio") {
+				// Stop any existing audio track
+				if (remoteAudioStream.getAudioTracks().length > 0) {
+					const oldTrack = remoteAudioStream.getAudioTracks()[0];
+					oldTrack.stop();
+					remoteAudioStream.removeTrack(oldTrack);
 				}
+				// Add new audio track
+				remoteAudioStream.addTrack(track);
+				audioElement.srcObject = remoteAudioStream;
+				console.log("✅ Added remote audio track to stream, total tracks:", remoteAudioStream.getTracks().length);
 				
-				// Always handle audio track (for both video and audio calls)
-				if (event.track.kind === "audio") {
-					audioElement.srcObject = remoteStream;
-					console.log("✅ Set remote audio stream");
-					// Ensure audio plays
-					audioElement.play().catch((err) => {
+				// Ensure audio plays
+				const playAudio = async () => {
+					try {
+						await audioElement.play();
+						console.log("✅ Remote audio playing");
+					} catch (err) {
 						console.error("Error playing remote audio:", err);
-					});
-				}
-			} else if (event.track) {
-				// Fallback: handle individual tracks if streams array is empty
-				if (event.track.kind === "video" && callType === "video") {
-					const stream = new MediaStream([event.track]);
-					videoElement.srcObject = stream;
-					console.log("✅ Set remote video track (fallback)");
-				}
-				if (event.track.kind === "audio") {
-					const stream = new MediaStream([event.track]);
-					audioElement.srcObject = stream;
-					console.log("✅ Set remote audio track (fallback)");
-					audioElement.play().catch((err) => {
-						console.error("Error playing remote audio:", err);
-					});
-				}
+						// Retry after a short delay
+						setTimeout(() => {
+							audioElement.play().catch((e) => console.error("Retry audio play failed:", e));
+						}, 500);
+					}
+				};
+				playAudio();
+				
+				// Handle track ended
+				track.onended = () => {
+					console.log("Remote audio track ended");
+					remoteAudioStream.removeTrack(track);
+					if (remoteAudioStream.getTracks().length === 0) {
+						audioElement.srcObject = null;
+					}
+				};
 			}
 		};
 
 		// Handle ICE candidates
 		peerConnection.onicecandidate = (event) => {
 			if (event.candidate) {
+				console.log("🧊 ICE candidate:", event.candidate.type);
 				socket.emit("ice-candidate", {
 					candidate: event.candidate,
 					targetSocketId,
 					roomId: roomIdRef.current,
 				});
+			} else {
+				console.log("🧊 ICE gathering complete");
 			}
+		};
+		
+		// Monitor connection state
+		peerConnection.onconnectionstatechange = () => {
+			console.log(`🔗 Connection state changed: ${peerConnection.connectionState} for ${targetSocketId}`);
+			if (peerConnection.connectionState === "failed") {
+				console.error("❌ Peer connection failed, attempting to restart...");
+				// Could implement reconnection logic here
+			}
+		};
+		
+		peerConnection.oniceconnectionstatechange = () => {
+			console.log(`🧊 ICE connection state: ${peerConnection.iceConnectionState} for ${targetSocketId}`);
+		};
+		
+		peerConnection.onsignalingstatechange = () => {
+			console.log(`📡 Signaling state: ${peerConnection.signalingState} for ${targetSocketId}`);
 		};
 
 		const peer: PeerConnection = {
@@ -280,6 +334,8 @@ export default function VideoCallRoom() {
 			userId: targetUserId,
 			videoElement: callType === "video" ? videoElement : container,
 			audioElement: audioElement,
+			remoteVideoStream: remoteVideoStream,
+			remoteAudioStream: remoteAudioStream,
 		};
 
 		peersRef.current.set(targetSocketId, peer);
@@ -287,13 +343,39 @@ export default function VideoCallRoom() {
 
 		// Create and send offer if initiator
 		if (isInitiator) {
-			const offer = await peerConnection.createOffer();
-			await peerConnection.setLocalDescription(offer);
-			socket.emit("offer", {
-				offer,
-				targetSocketId,
-				roomId: roomIdRef.current,
-			});
+			try {
+				// Ensure we have tracks before creating offer
+				if (!localStreamRef.current || localStreamRef.current.getTracks().length === 0) {
+					console.warn("⚠️ No local stream available, waiting...");
+					// Wait a bit for stream to be ready
+					await new Promise(resolve => setTimeout(resolve, 500));
+				}
+				
+				// Re-add tracks if stream is now available
+				if (localStreamRef.current && localStreamRef.current.getTracks().length > 0) {
+					localStreamRef.current.getTracks().forEach((track) => {
+						const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === track.kind);
+						if (!sender) {
+							peerConnection.addTrack(track, localStreamRef.current!);
+							console.log(`✅ Added ${track.kind} track before creating offer`);
+						}
+					});
+				}
+				
+				const offer = await peerConnection.createOffer({
+					offerToReceiveAudio: true,
+					offerToReceiveVideo: callType === "video",
+				});
+				await peerConnection.setLocalDescription(offer);
+				console.log("✅ Created and set local offer");
+				socket.emit("offer", {
+					offer,
+					targetSocketId,
+					roomId: roomIdRef.current,
+				});
+			} catch (error) {
+				console.error("Error creating offer:", error);
+			}
 		}
 
 		return peer;
@@ -305,14 +387,34 @@ export default function VideoCallRoom() {
 		if (!peer) {
 			peer = await createPeerConnection(socketId, "unknown", socket, false);
 		}
-		await peer.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-		const answer = await peer.peerConnection.createAnswer();
-		await peer.peerConnection.setLocalDescription(answer);
-		socket.emit("answer", {
-			answer,
-			targetSocketId: socketId,
-			roomId: roomIdRef.current,
-		});
+		
+		try {
+			// Ensure we have tracks before answering
+			if (localStreamRef.current && localStreamRef.current.getTracks().length > 0) {
+				localStreamRef.current.getTracks().forEach((track) => {
+					const sender = peer.peerConnection.getSenders().find(s => s.track && s.track.kind === track.kind);
+					if (!sender) {
+						peer.peerConnection.addTrack(track, localStreamRef.current!);
+						console.log(`✅ Added ${track.kind} track before answering`);
+					}
+				});
+			}
+			
+			await peer.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+			const answer = await peer.peerConnection.createAnswer({
+				offerToReceiveAudio: true,
+				offerToReceiveVideo: callType === "video",
+			});
+			await peer.peerConnection.setLocalDescription(answer);
+			console.log("✅ Created and set local answer");
+			socket.emit("answer", {
+				answer,
+				targetSocketId: socketId,
+				roomId: roomIdRef.current,
+			});
+		} catch (error) {
+			console.error("Error handling offer:", error);
+		}
 	};
 
 	const handleAnswer = async (answer: RTCSessionDescriptionInit, socketId: string) => {
