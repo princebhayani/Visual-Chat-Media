@@ -13,6 +13,7 @@ interface PeerConnection {
 	socketId: string;
 	userId: string;
 	videoElement: HTMLVideoElement | HTMLElement; // Can be video element or container
+	audioElement?: HTMLAudioElement; // Audio element for audio calls
 }
 
 export function getUrlParams(url = window.location.href) {
@@ -64,7 +65,13 @@ export default function VideoCallRoom() {
 
 			newSocket.on("user-joined", async (data: { userId: string; socketId: string }) => {
 				console.log("User joined:", data);
-				await createPeerConnection(data.socketId, data.userId, newSocket, false);
+				// Check if peer connection already exists to avoid duplicates
+				if (peersRef.current.has(data.socketId)) {
+					console.log("Peer connection already exists for:", data.socketId);
+					return;
+				}
+				// Existing user should initiate the connection
+				await createPeerConnection(data.socketId, data.userId, newSocket, true);
 			});
 
 			newSocket.on("offer", async (data: { offer: RTCSessionDescriptionInit; socketId: string }) => {
@@ -110,6 +117,20 @@ export default function VideoCallRoom() {
 					if (localVideoRef.current && urlCallType === "video") {
 						localVideoRef.current.srcObject = stream;
 					}
+					
+					// Add tracks to any existing peer connections that were created before stream was ready
+					peersRef.current.forEach((peer) => {
+						stream.getTracks().forEach((track) => {
+							// Check if track already added
+							const sender = peer.peerConnection.getSenders().find(
+								(s) => s.track && s.track.kind === track.kind
+							);
+							if (!sender) {
+								peer.peerConnection.addTrack(track, stream);
+								console.log(`✅ Added ${track.kind} track to existing peer connection`);
+							}
+						});
+					});
 				} catch (error) {
 					console.error("Error accessing media devices:", error);
 				}
@@ -172,6 +193,12 @@ export default function VideoCallRoom() {
 		videoElement.playsInline = true;
 		videoElement.className = "w-full h-full object-cover";
 		
+		// Create audio element for remote peer (always needed for audio playback)
+		const audioElement = document.createElement("audio");
+		audioElement.autoplay = true;
+		audioElement.playsInline = true;
+		audioElement.style.display = "none"; // Hidden, just for audio playback
+		
 		// Create audio-only placeholder
 		const audioPlaceholder = document.createElement("div");
 		audioPlaceholder.className = "flex items-center justify-center h-full w-full";
@@ -188,15 +215,51 @@ export default function VideoCallRoom() {
 		} else {
 			container.appendChild(audioPlaceholder);
 		}
+		
+		// Always append audio element for audio playback (hidden)
+		container.appendChild(audioElement);
 
 		if (peersContainerRef.current) {
 			peersContainerRef.current.appendChild(container);
 		}
 
-		// Handle remote stream
+		// Handle remote stream - properly handle both video and audio tracks
 		peerConnection.ontrack = (event) => {
-			if (callType === "video" && event.streams[0]) {
-				videoElement.srcObject = event.streams[0];
+			console.log("📹 Received remote track:", event.track.kind, event.streams);
+			
+			if (event.streams && event.streams.length > 0) {
+				const remoteStream = event.streams[0];
+				
+				// Handle video track
+				if (callType === "video" && event.track.kind === "video") {
+					videoElement.srcObject = remoteStream;
+					console.log("✅ Set remote video stream");
+				}
+				
+				// Always handle audio track (for both video and audio calls)
+				if (event.track.kind === "audio") {
+					audioElement.srcObject = remoteStream;
+					console.log("✅ Set remote audio stream");
+					// Ensure audio plays
+					audioElement.play().catch((err) => {
+						console.error("Error playing remote audio:", err);
+					});
+				}
+			} else if (event.track) {
+				// Fallback: handle individual tracks if streams array is empty
+				if (event.track.kind === "video" && callType === "video") {
+					const stream = new MediaStream([event.track]);
+					videoElement.srcObject = stream;
+					console.log("✅ Set remote video track (fallback)");
+				}
+				if (event.track.kind === "audio") {
+					const stream = new MediaStream([event.track]);
+					audioElement.srcObject = stream;
+					console.log("✅ Set remote audio track (fallback)");
+					audioElement.play().catch((err) => {
+						console.error("Error playing remote audio:", err);
+					});
+				}
 			}
 		};
 
@@ -216,6 +279,7 @@ export default function VideoCallRoom() {
 			socketId: targetSocketId,
 			userId: targetUserId,
 			videoElement: callType === "video" ? videoElement : container,
+			audioElement: audioElement,
 		};
 
 		peersRef.current.set(targetSocketId, peer);
@@ -236,7 +300,11 @@ export default function VideoCallRoom() {
 	};
 
 	const handleOffer = async (offer: RTCSessionDescriptionInit, socketId: string, socket: Socket) => {
-		const peer = await createPeerConnection(socketId, "unknown", socket, false);
+		// Check if peer connection already exists
+		let peer = peersRef.current.get(socketId);
+		if (!peer) {
+			peer = await createPeerConnection(socketId, "unknown", socket, false);
+		}
 		await peer.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
 		const answer = await peer.peerConnection.createAnswer();
 		await peer.peerConnection.setLocalDescription(answer);
@@ -271,6 +339,10 @@ export default function VideoCallRoom() {
 				container.remove();
 			} else {
 				peer.videoElement.remove();
+			}
+			// Clean up audio element if it exists
+			if (peer.audioElement && peer.audioElement.parentElement) {
+				peer.audioElement.remove();
 			}
 			peersRef.current.delete(socketId);
 			setPeers((prev) => {
@@ -344,13 +416,22 @@ export default function VideoCallRoom() {
 					localStreamRef.current.removeTrack(oldVideoTrack);
 					localStreamRef.current.addTrack(newVideoTrack);
 					oldVideoTrack.stop();
-					// Update all peer connections
-					peersRef.current.forEach((peer) => {
+					// Update all peer connections with proper error handling
+					peersRef.current.forEach(async (peer) => {
 						const sender = peer.peerConnection.getSenders().find(
 							(s) => s.track && s.track.kind === "video"
 						);
 						if (sender) {
-							sender.replaceTrack(newVideoTrack);
+							try {
+								await sender.replaceTrack(newVideoTrack);
+								console.log("✅ Replaced video track with camera");
+							} catch (error) {
+								console.error("Error replacing track:", error);
+							}
+						} else {
+							// If no sender exists, add the track
+							peer.peerConnection.addTrack(newVideoTrack, localStreamRef.current!);
+							console.log("✅ Added new video track");
 						}
 					});
 					if (localVideoRef.current) {
@@ -361,24 +442,40 @@ export default function VideoCallRoom() {
 			} else {
 				// Start screen sharing
 				const screenStream = await navigator.mediaDevices.getDisplayMedia({
-					video: true,
+					video: {
+						displaySurface: "monitor",
+						width: { ideal: 1920 },
+						height: { ideal: 1080 },
+					} as MediaTrackConstraints,
 					audio: true,
 				});
 				screenStreamRef.current = screenStream;
 				const screenVideoTrack = screenStream.getVideoTracks()[0];
 				const oldVideoTrack = localStreamRef.current?.getVideoTracks()[0];
 				
-				if (oldVideoTrack && screenVideoTrack && localStreamRef.current) {
-					localStreamRef.current.removeTrack(oldVideoTrack);
+				if (screenVideoTrack && localStreamRef.current) {
+					if (oldVideoTrack) {
+						localStreamRef.current.removeTrack(oldVideoTrack);
+						oldVideoTrack.stop();
+					}
 					localStreamRef.current.addTrack(screenVideoTrack);
-					oldVideoTrack.stop();
-					// Update all peer connections
-					peersRef.current.forEach((peer) => {
+					
+					// Update all peer connections with proper error handling
+					peersRef.current.forEach(async (peer) => {
 						const sender = peer.peerConnection.getSenders().find(
 							(s) => s.track && s.track.kind === "video"
 						);
 						if (sender) {
-							sender.replaceTrack(screenVideoTrack);
+							try {
+								await sender.replaceTrack(screenVideoTrack);
+								console.log("✅ Replaced video track with screen share");
+							} catch (error) {
+								console.error("Error replacing track with screen share:", error);
+							}
+						} else {
+							// If no sender exists, add the track
+							peer.peerConnection.addTrack(screenVideoTrack, localStreamRef.current!);
+							console.log("✅ Added screen share track");
 						}
 					});
 					if (localVideoRef.current) {
