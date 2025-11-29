@@ -24,7 +24,7 @@ export function getUrlParams(url = window.location.href) {
 }
 
 export default function VideoCallRoom() {
-	const { user } = useFirebaseAuthContext();
+	const { user, isLoading: userLoading } = useFirebaseAuthContext();
 	const { selectedConversation } = useConversationStore();
 	const [socket, setSocket] = useState<Socket | null>(null);
 	const [peers, setPeers] = useState<Map<string, PeerConnection>>(new Map());
@@ -44,7 +44,19 @@ export default function VideoCallRoom() {
 	const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000";
 
 	useEffect(() => {
-		if (!user) return;
+		console.log("🎬 VideoCallRoom useEffect triggered", { user: !!user, userLoading, url: window.location.href });
+		
+		if (userLoading) {
+			console.log("⏳ Waiting for user to load...");
+			return;
+		}
+		
+		if (!user) {
+			console.log("⚠️ No user available, cannot initialize call");
+			return;
+		}
+		
+		console.log("✅ User available, initializing call room");
 
 		const roomId = getUrlParams().get("roomID") || selectedConversation?.id || "default-room";
 		const callId = getUrlParams().get("callId") || "";
@@ -53,72 +65,96 @@ export default function VideoCallRoom() {
 		callIdRef.current = callId;
 		setCallType(urlCallType);
 
-		// Get Firebase ID token for authentication
-		user.getIdToken().then((token) => {
-			const newSocket = io(API_BASE_URL, {
-				auth: { token },
-				transports: ["websocket"],
-			});
-
-			newSocket.on("connect", () => {
-				console.log("Socket connected");
-				newSocket.emit("join-room", roomId);
-			});
-
-			newSocket.on("user-joined", async (data: { userId: string; socketId: string }) => {
-				console.log("User joined:", data);
-				// Check if peer connection already exists to avoid duplicates
-				if (peersRef.current.has(data.socketId)) {
-					console.log("Peer connection already exists for:", data.socketId);
-					return;
+		// Initialize local media stream FIRST, before connecting socket
+		(async () => {
+			try {
+				console.log("🎥 Requesting media stream...");
+				const constraints: MediaStreamConstraints = {
+					video: urlCallType === "video",
+					audio: true,
+				};
+				const stream = await navigator.mediaDevices.getUserMedia(constraints);
+				console.log("✅ Got media stream:", {
+					videoTracks: stream.getVideoTracks().length,
+					audioTracks: stream.getAudioTracks().length,
+				});
+				
+				localStreamRef.current = stream;
+				setLocalStream(stream);
+				setIsVideoEnabled(urlCallType === "video");
+				if (localVideoRef.current && urlCallType === "video") {
+					localVideoRef.current.srcObject = stream;
 				}
-				// Existing user should initiate the connection
-				await createPeerConnection(data.socketId, data.userId, newSocket, true);
-			});
+				
+				// Now that stream is ready, connect socket
+				user.getIdToken().then((token) => {
+					console.log("🔑 Got Firebase token, connecting socket to:", API_BASE_URL);
+					const newSocket = io(API_BASE_URL, {
+						auth: { token },
+						transports: ["websocket"],
+					});
 
-			newSocket.on("offer", async (data: { offer: RTCSessionDescriptionInit; socketId: string }) => {
-				await handleOffer(data.offer, data.socketId, newSocket);
-			});
+					newSocket.on("connect", () => {
+						console.log("✅ Socket connected, stream ready, joining room:", roomId);
+						newSocket.emit("join-room", roomId);
+					});
+					
+					newSocket.on("connect_error", (error) => {
+						console.error("❌ Socket connection error:", error);
+					});
+					
+					newSocket.on("disconnect", (reason) => {
+						console.log("🔌 Socket disconnected:", reason);
+					});
+					
+					newSocket.on("room-joined", (data: { roomId: string }) => {
+						console.log("✅ Confirmed: Joined room", data.roomId);
+					});
 
-			newSocket.on("answer", async (data: { answer: RTCSessionDescriptionInit; socketId: string }) => {
-				await handleAnswer(data.answer, data.socketId);
-			});
+					newSocket.on("user-joined", async (data: { userId: string; socketId: string }) => {
+						console.log("User joined:", data);
+						// Check if peer connection already exists to avoid duplicates
+						if (peersRef.current.has(data.socketId)) {
+							console.log("Peer connection already exists for:", data.socketId);
+							return;
+						}
+						
+						// Determine who should initiate based on socket ID comparison
+						// The user with the "lower" socket ID initiates to avoid conflicts
+						const shouldInitiate = newSocket.id < data.socketId;
+						console.log(`Creating peer connection - ${shouldInitiate ? 'Initiator' : 'Waiting for offer'}, my socket: ${newSocket.id}, their socket: ${data.socketId}`);
+						
+						await createPeerConnection(data.socketId, data.userId, newSocket, shouldInitiate);
+					});
 
-			newSocket.on("ice-candidate", async (data: { candidate: RTCIceCandidateInit; socketId: string }) => {
-				await handleIceCandidate(data.candidate, data.socketId);
-			});
+					newSocket.on("offer", async (data: { offer: RTCSessionDescriptionInit; socketId: string }) => {
+						await handleOffer(data.offer, data.socketId, newSocket);
+					});
 
-			newSocket.on("user-left", (data: { userId: string; socketId: string }) => {
-				console.log("User left:", data);
-				removePeer(data.socketId);
-			});
+					newSocket.on("answer", async (data: { answer: RTCSessionDescriptionInit; socketId: string }) => {
+						await handleAnswer(data.answer, data.socketId);
+					});
 
-			newSocket.on("call-declined", (data: { callId: string; roomId: string }) => {
-				console.log("📞 Call declined by recipient:", data);
-				// Close the call window if this is the declined call
-				if (data.callId === callIdRef.current) {
-					setTimeout(() => {
-						window.close();
-					}, 1000);
-				}
-			});
+					newSocket.on("ice-candidate", async (data: { candidate: RTCIceCandidateInit; socketId: string }) => {
+						await handleIceCandidate(data.candidate, data.socketId);
+					});
 
-			setSocket(newSocket);
+					newSocket.on("user-left", (data: { userId: string; socketId: string }) => {
+						console.log("User left:", data);
+						removePeer(data.socketId);
+					});
 
-			// Initialize local media stream with the correct call type
-			(async () => {
-				try {
-					const constraints: MediaStreamConstraints = {
-						video: urlCallType === "video",
-						audio: true,
-					};
-					const stream = await navigator.mediaDevices.getUserMedia(constraints);
-					localStreamRef.current = stream;
-					setLocalStream(stream);
-					setIsVideoEnabled(urlCallType === "video");
-					if (localVideoRef.current && urlCallType === "video") {
-						localVideoRef.current.srcObject = stream;
-					}
+					newSocket.on("call-declined", (data: { callId: string; roomId: string }) => {
+						console.log("📞 Call declined by recipient:", data);
+						// Close the call window if this is the declined call
+						if (data.callId === callIdRef.current) {
+							setTimeout(() => {
+								window.close();
+							}, 1000);
+						}
+					});
+
+					setSocket(newSocket);
 					
 					// Add tracks to any existing peer connections that were created before stream was ready
 					peersRef.current.forEach((peer) => {
@@ -130,20 +166,23 @@ export default function VideoCallRoom() {
 							if (!sender) {
 								peer.peerConnection.addTrack(track, stream);
 								console.log(`✅ Added ${track.kind} track to existing peer connection`);
+								
+								// If we're the initiator and haven't created offer yet, create it now
+								if (peer.peerConnection.signalingState === "stable" && newSocket.id < peer.socketId) {
+									createOfferForPeer(peer, newSocket);
+								}
 							}
 						});
 					});
-				} catch (error) {
-					console.error("Error accessing media devices:", error);
-				}
-			})();
-
-			return () => {
-				newSocket.disconnect();
-			};
-		});
+				});
+			} catch (error) {
+				console.error("❌ Error accessing media devices:", error);
+				alert("Failed to access camera/microphone. Please check permissions.");
+			}
+		})();
 
 		return () => {
+			console.log("🧹 Cleaning up video call room");
 			// Only emit call-ended if user explicitly ended the call (not on unmount/close)
 			// We'll handle cleanup without emitting call-ended here
 			if (localStreamRef.current) {
@@ -154,13 +193,15 @@ export default function VideoCallRoom() {
 			}
 			peersRef.current.forEach((peer) => {
 				peer.peerConnection.close();
-				peer.videoElement.remove();
+				if (peer.videoElement && peer.videoElement.parentElement) {
+					peer.videoElement.parentElement.remove();
+				}
 			});
 			if (socket) {
 				socket.disconnect();
 			}
 		};
-	}, [user]);
+	}, [user, userLoading]);
 
 
 	const createPeerConnection = async (
@@ -341,50 +382,94 @@ export default function VideoCallRoom() {
 		peersRef.current.set(targetSocketId, peer);
 		setPeers((prev) => new Map(prev).set(targetSocketId, peer));
 
-		// Create and send offer if initiator
+		// Create and send offer if initiator (but only if stream is ready)
 		if (isInitiator) {
-			try {
-				// Ensure we have tracks before creating offer
+			// Wait for stream to be ready before creating offer
+			const waitForStream = async () => {
+				let attempts = 0;
+				while ((!localStreamRef.current || localStreamRef.current.getTracks().length === 0) && attempts < 10) {
+					console.log(`⏳ Waiting for stream... (attempt ${attempts + 1}/10)`);
+					await new Promise(resolve => setTimeout(resolve, 200));
+					attempts++;
+				}
+				
 				if (!localStreamRef.current || localStreamRef.current.getTracks().length === 0) {
-					console.warn("⚠️ No local stream available, waiting...");
-					// Wait a bit for stream to be ready
-					await new Promise(resolve => setTimeout(resolve, 500));
+					console.error("❌ Stream not available after waiting");
+					return;
 				}
 				
-				// Re-add tracks if stream is now available
-				if (localStreamRef.current && localStreamRef.current.getTracks().length > 0) {
-					localStreamRef.current.getTracks().forEach((track) => {
-						const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === track.kind);
-						if (!sender) {
-							peerConnection.addTrack(track, localStreamRef.current!);
-							console.log(`✅ Added ${track.kind} track before creating offer`);
-						}
+				// Ensure tracks are added
+				localStreamRef.current.getTracks().forEach((track) => {
+					const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === track.kind);
+					if (!sender) {
+						peerConnection.addTrack(track, localStreamRef.current!);
+						console.log(`✅ Added ${track.kind} track before creating offer`);
+					}
+				});
+				
+				try {
+					const offer = await peerConnection.createOffer({
+						offerToReceiveAudio: true,
+						offerToReceiveVideo: callType === "video",
 					});
+					await peerConnection.setLocalDescription(offer);
+					console.log("✅ Created and set local offer, sending to:", targetSocketId);
+					socket.emit("offer", {
+						offer,
+						targetSocketId,
+						roomId: roomIdRef.current,
+					});
+				} catch (error) {
+					console.error("❌ Error creating offer:", error);
 				}
-				
-				const offer = await peerConnection.createOffer({
-					offerToReceiveAudio: true,
-					offerToReceiveVideo: callType === "video",
-				});
-				await peerConnection.setLocalDescription(offer);
-				console.log("✅ Created and set local offer");
-				socket.emit("offer", {
-					offer,
-					targetSocketId,
-					roomId: roomIdRef.current,
-				});
-			} catch (error) {
-				console.error("Error creating offer:", error);
-			}
+			};
+			
+			waitForStream();
 		}
 
 		return peer;
 	};
 
+	const createOfferForPeer = async (peer: PeerConnection, socket: Socket) => {
+		if (peer.peerConnection.signalingState !== "stable") {
+			console.log("⚠️ Cannot create offer, signaling state:", peer.peerConnection.signalingState);
+			return;
+		}
+		
+		try {
+			// Ensure we have tracks
+			if (localStreamRef.current && localStreamRef.current.getTracks().length > 0) {
+				localStreamRef.current.getTracks().forEach((track) => {
+					const sender = peer.peerConnection.getSenders().find(s => s.track && s.track.kind === track.kind);
+					if (!sender) {
+						peer.peerConnection.addTrack(track, localStreamRef.current!);
+						console.log(`✅ Added ${track.kind} track before creating offer`);
+					}
+				});
+			}
+			
+			const offer = await peer.peerConnection.createOffer({
+				offerToReceiveAudio: true,
+				offerToReceiveVideo: callType === "video",
+			});
+			await peer.peerConnection.setLocalDescription(offer);
+			console.log("✅ Created offer for peer:", peer.socketId);
+			socket.emit("offer", {
+				offer,
+				targetSocketId: peer.socketId,
+				roomId: roomIdRef.current,
+			});
+		} catch (error) {
+			console.error("❌ Error creating offer for peer:", error);
+		}
+	};
+
 	const handleOffer = async (offer: RTCSessionDescriptionInit, socketId: string, socket: Socket) => {
+		console.log("📥 Received offer from:", socketId);
 		// Check if peer connection already exists
 		let peer = peersRef.current.get(socketId);
 		if (!peer) {
+			console.log("Creating new peer connection for incoming offer");
 			peer = await createPeerConnection(socketId, "unknown", socket, false);
 		}
 		
@@ -398,22 +483,26 @@ export default function VideoCallRoom() {
 						console.log(`✅ Added ${track.kind} track before answering`);
 					}
 				});
+			} else {
+				console.warn("⚠️ No local stream available when answering offer");
 			}
 			
 			await peer.peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+			console.log("✅ Set remote description");
+			
 			const answer = await peer.peerConnection.createAnswer({
 				offerToReceiveAudio: true,
 				offerToReceiveVideo: callType === "video",
 			});
 			await peer.peerConnection.setLocalDescription(answer);
-			console.log("✅ Created and set local answer");
+			console.log("✅ Created and set local answer, sending to:", socketId);
 			socket.emit("answer", {
 				answer,
 				targetSocketId: socketId,
 				roomId: roomIdRef.current,
 			});
 		} catch (error) {
-			console.error("Error handling offer:", error);
+			console.error("❌ Error handling offer:", error);
 		}
 	};
 
@@ -650,6 +739,14 @@ export default function VideoCallRoom() {
 		window.close();
 	};
 
+	if (userLoading) {
+		return (
+			<div className='flex min-h-screen flex-col items-center justify-center gap-2 bg-left-panel text-gray-100'>
+				<p className='text-lg font-semibold'>Loading...</p>
+			</div>
+		);
+	}
+	
 	if (!user) {
 		return (
 			<div className='flex min-h-screen flex-col items-center justify-center gap-2 bg-left-panel text-gray-100'>
