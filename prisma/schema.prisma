@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String                     @id @default(uuid())
+  firebaseUid  String                     @unique
+  email        String                     @unique
+  name         String?
+  avatarUrl    String?
+  isOnline     Boolean                    @default(false)
+  conversations ConversationParticipant[]
+  adminOfConversations Conversation[]     @relation("ConversationAdmin")
+  messages     Message[]
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+}
+
+model Conversation {
+  id            String                     @id @default(uuid())
+  isGroup       Boolean                    @default(false)
+  groupName     String?
+  groupImageUrl String?
+  adminId       String?
+  admin         User?                      @relation("ConversationAdmin", fields: [adminId], references: [id])
+  participants  ConversationParticipant[]
+  messages      Message[]
+  lastMessageAt DateTime                   @default(now())
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
+}
+
+model ConversationParticipant {
+  id             String        @id @default(uuid())
+  conversation   Conversation  @relation(fields: [conversationId], references: [id])
+  conversationId String
+  user           User          @relation(fields: [userId], references: [id])
+  userId         String
+  joinedAt       DateTime      @default(now())
+
+  @@unique([conversationId, userId])
+}
+
+model Message {
+  id             String        @id @default(uuid())
+  conversation   Conversation  @relation(fields: [conversationId], references: [id])
+  conversationId String
+  sender         User          @relation(fields: [senderId], references: [id])
+  senderId       String
+  content        String
+  messageType    MessageType   @default(TEXT)
+  createdAt      DateTime      @default(now())
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+}
+

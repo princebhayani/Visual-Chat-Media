@@ -1,22 +1,37 @@
-import { Id } from "../../convex/_generated/dataModel";
 import { create } from "zustand";
 
+export type UserProfile = {
+	id: string;
+	firebaseUid: string;
+	email: string;
+	name?: string | null;
+	avatarUrl?: string | null;
+	isOnline: boolean;
+};
+
+export interface IMessage {
+	_id: string;
+	content: string;
+	_creationTime: number;
+	messageType: "text" | "image" | "video";
+	sender: UserProfile;
+}
+
 export type Conversation = {
-	_id: Id<"conversations">;
-	image?: string;
-	participants: Id<"users">[];
+	id: string;
+	_id: string;
 	isGroup: boolean;
-	name?: string;
-	groupImage?: string;
-	groupName?: string;
-	admin?: Id<"users">;
+	groupName?: string | null;
+	groupImageUrl?: string | null;
+	adminId?: string | null;
+	image?: string | null;
+	name?: string | null;
+	participants: string[];
+	participantProfiles: UserProfile[];
 	isOnline?: boolean;
-	lastMessage?: {
-		_id: Id<"messages">;
-		conversation: Id<"conversations">;
-		content: string;
-		sender: Id<"users">;
-	};
+	lastMessage?: IMessage;
+	updatedAt: string;
+	createdAt: string;
 };
 
 type ConversationStore = {
@@ -28,19 +43,3 @@ export const useConversationStore = create<ConversationStore>((set) => ({
 	selectedConversation: null,
 	setSelectedConversation: (conversation) => set({ selectedConversation: conversation }),
 }));
-
-export interface IMessage {
-	_id: string;
-	content: string;
-	_creationTime: number;
-	messageType: "text" | "image" | "video";
-	sender: {
-		_id: Id<"users">;
-		image: string;
-		name?: string;
-		tokenIdentifier: string;
-		email: string;
-		_creationTime: number;
-		isOnline: boolean;
-	};
-}

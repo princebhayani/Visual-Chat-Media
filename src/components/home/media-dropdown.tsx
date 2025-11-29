@@ -6,77 +6,67 @@ import { Button } from "../ui/button";
 import Image from "next/image";
 import ReactPlayer from "react-player";
 import toast from "react-hot-toast";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
 import { useConversationStore } from "@/store/chat-store";
+import { authedFetch } from "@/lib/api-client";
+import { useSWRConfig } from "swr";
 
 const MediaDropdown = () => {
 	const imageInput = useRef<HTMLInputElement>(null);
 	const videoInput = useRef<HTMLInputElement>(null);
 	const [selectedImage, setSelectedImage] = useState<File | null>(null);
 	const [selectedVideo, setSelectedVideo] = useState<File | null>(null);
+	const [imagePreview, setImagePreview] = useState<string | null>(null);
+	const [videoPreview, setVideoPreview] = useState<string | null>(null);
 
 	const [isLoading, setIsLoading] = useState(false);
-
-	const generateUploadUrl = useMutation(api.conversations.generateUploadUrl);
-	const sendImage = useMutation(api.messages.sendImage);
-	const sendVideo = useMutation(api.messages.sendVideo);
-	const me = useQuery(api.users.getMe);
-
 	const { selectedConversation } = useConversationStore();
+	const { mutate } = useSWRConfig();
 
-	const handleSendImage = async () => {
+	const handleSendMedia = async (content: string, messageType: "image" | "video") => {
+		if (!selectedConversation) return;
 		setIsLoading(true);
 		try {
-			// Step 1: Get a short-lived upload URL
-			const postUrl = await generateUploadUrl();
-			// Step 2: POST the file to the URL
-			const result = await fetch(postUrl, {
+			await authedFetch("/messages", {
 				method: "POST",
-				headers: { "Content-Type": selectedImage!.type },
-				body: selectedImage,
+				body: JSON.stringify({
+					conversationId: selectedConversation.id,
+					content,
+					messageType,
+				}),
 			});
 
-			const { storageId } = await result.json();
-			// Step 3: Save the newly allocated storage id to the database
-			await sendImage({
-				conversation: selectedConversation!._id,
-				imgId: storageId,
-				sender: me!._id,
-			});
-
-			setSelectedImage(null);
+			await mutate(`/messages/${selectedConversation.id}`);
 		} catch (err) {
-			toast.error("Failed to send image");
+			toast.error("Failed to send media");
+			console.error(err);
 		} finally {
 			setIsLoading(false);
 		}
 	};
 
-	const handleSendVideo = async () => {
-		setIsLoading(true);
-		try {
-			const postUrl = await generateUploadUrl();
-			const result = await fetch(postUrl, {
-				method: "POST",
-				headers: { "Content-Type": selectedVideo!.type },
-				body: selectedVideo,
-			});
-
-			const { storageId } = await result.json();
-
-			await sendVideo({
-				videoId: storageId,
-				conversation: selectedConversation!._id,
-				sender: me!._id,
-			});
-
-			setSelectedVideo(null);
-		} catch (error) {
-		} finally {
-			setIsLoading(false);
+	useEffect(() => {
+		if (!selectedImage) {
+			setImagePreview(null);
+			return;
 		}
-	};
+		const reader = new FileReader();
+		reader.onload = (e) => setImagePreview(e.target?.result as string);
+		reader.readAsDataURL(selectedImage);
+	}, [selectedImage]);
+
+	useEffect(() => {
+		if (!selectedVideo) {
+			setVideoPreview(null);
+			return;
+		}
+		const reader = new FileReader();
+		reader.onload = (e) => setVideoPreview(e.target?.result as string);
+		reader.readAsDataURL(selectedVideo);
+	}, [selectedVideo]);
+
+	if (!selectedConversation) {
+		return null;
+	}
 
 	return (
 		<>
@@ -84,35 +74,41 @@ const MediaDropdown = () => {
 				type='file'
 				ref={imageInput}
 				accept='image/*'
-				onChange={(e) => setSelectedImage(e.target.files![0])}
+				onChange={(e) => setSelectedImage(e.target.files?.[0] ?? null)}
 				hidden
 			/>
 
 			<input
 				type='file'
 				ref={videoInput}
-				accept='video/mp4'
-				onChange={(e) => setSelectedVideo(e.target?.files![0])}
+				accept='video/*'
+				onChange={(e) => setSelectedVideo(e.target.files?.[0] ?? null)}
 				hidden
 			/>
 
-			{selectedImage && (
+			{selectedImage && imagePreview && (
 				<MediaImageDialog
 					isOpen={selectedImage !== null}
 					onClose={() => setSelectedImage(null)}
-					selectedImage={selectedImage}
+					imageSrc={imagePreview}
 					isLoading={isLoading}
-					handleSendImage={handleSendImage}
+					onSend={async () => {
+						await handleSendMedia(imagePreview, "image");
+						setSelectedImage(null);
+					}}
 				/>
 			)}
 
-			{selectedVideo && (
+			{selectedVideo && videoPreview && (
 				<MediaVideoDialog
 					isOpen={selectedVideo !== null}
 					onClose={() => setSelectedVideo(null)}
-					selectedVideo={selectedVideo}
+					videoSrc={videoPreview}
 					isLoading={isLoading}
-					handleSendVideo={handleSendVideo}
+					onSend={async () => {
+						await handleSendMedia(videoPreview, "video");
+						setSelectedVideo(null);
+					}}
 				/>
 			)}
 
@@ -122,10 +118,10 @@ const MediaDropdown = () => {
 				</DropdownMenuTrigger>
 
 				<DropdownMenuContent>
-					<DropdownMenuItem onClick={() => imageInput.current!.click()}>
+					<DropdownMenuItem onClick={() => imageInput.current?.click()}>
 						<ImageIcon size={18} className='mr-1' /> Photo
 					</DropdownMenuItem>
-					<DropdownMenuItem onClick={() => videoInput.current!.click()}>
+					<DropdownMenuItem onClick={() => videoInput.current?.click()}>
 						<Video size={20} className='mr-1' />
 						Video
 					</DropdownMenuItem>
@@ -139,21 +135,12 @@ export default MediaDropdown;
 type MediaImageDialogProps = {
 	isOpen: boolean;
 	onClose: () => void;
-	selectedImage: File;
+	imageSrc: string;
 	isLoading: boolean;
-	handleSendImage: () => void;
+	onSend: () => Promise<void>;
 };
 
-const MediaImageDialog = ({ isOpen, onClose, selectedImage, isLoading, handleSendImage }: MediaImageDialogProps) => {
-	const [renderedImage, setRenderedImage] = useState<string | null>(null);
-
-	useEffect(() => {
-		if (!selectedImage) return;
-		const reader = new FileReader();
-		reader.onload = (e) => setRenderedImage(e.target?.result as string);
-		reader.readAsDataURL(selectedImage);
-	}, [selectedImage]);
-
+const MediaImageDialog = ({ isOpen, onClose, imageSrc, isLoading, onSend }: MediaImageDialogProps) => {
 	return (
 		<Dialog
 			open={isOpen}
@@ -163,8 +150,8 @@ const MediaImageDialog = ({ isOpen, onClose, selectedImage, isLoading, handleSen
 		>
 			<DialogContent>
 				<DialogDescription className='flex flex-col gap-10 justify-center items-center'>
-					{renderedImage && <Image src={renderedImage} width={300} height={300} alt='selected image' />}
-					<Button className='w-full' disabled={isLoading} onClick={handleSendImage}>
+					{imageSrc && <Image src={imageSrc} width={300} height={300} alt='selected image' />}
+					<Button className='w-full' disabled={isLoading} onClick={onSend}>
 						{isLoading ? "Sending..." : "Send"}
 					</Button>
 				</DialogDescription>
@@ -176,14 +163,12 @@ const MediaImageDialog = ({ isOpen, onClose, selectedImage, isLoading, handleSen
 type MediaVideoDialogProps = {
 	isOpen: boolean;
 	onClose: () => void;
-	selectedVideo: File;
+	videoSrc: string;
 	isLoading: boolean;
-	handleSendVideo: () => void;
+	onSend: () => Promise<void>;
 };
 
-const MediaVideoDialog = ({ isOpen, onClose, selectedVideo, isLoading, handleSendVideo }: MediaVideoDialogProps) => {
-	const renderedVideo = URL.createObjectURL(new Blob([selectedVideo], { type: "video/mp4" }));
-
+const MediaVideoDialog = ({ isOpen, onClose, videoSrc, isLoading, onSend }: MediaVideoDialogProps) => {
 	return (
 		<Dialog
 			open={isOpen}
@@ -194,9 +179,9 @@ const MediaVideoDialog = ({ isOpen, onClose, selectedVideo, isLoading, handleSen
 			<DialogContent>
 				<DialogDescription>Video</DialogDescription>
 				<div className='w-full'>
-					{renderedVideo && <ReactPlayer url={renderedVideo} controls width='100%' />}
+					{videoSrc && <ReactPlayer url={videoSrc} controls width='100%' />}
 				</div>
-				<Button className='w-full' disabled={isLoading} onClick={handleSendVideo}>
+				<Button className='w-full' disabled={isLoading} onClick={onSend}>
 					{isLoading ? "Sending..." : "Send"}
 				</Button>
 			</DialogContent>

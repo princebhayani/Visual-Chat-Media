@@ -1,37 +1,46 @@
-import { Laugh, Mic, Plus, Send } from "lucide-react";
+"use client";
+
+import { Laugh, Mic, Send } from "lucide-react";
 import { Input } from "../ui/input";
 import { useState } from "react";
 import { Button } from "../ui/button";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
-import toast from "react-hot-toast";
 import { useConversationStore } from "@/store/chat-store";
 import useComponentVisible from "@/hooks/useComponentVisible";
 import EmojiPicker, { Theme } from "emoji-picker-react";
 import MediaDropdown from "./media-dropdown";
+import { authedFetch } from "@/lib/api-client";
+import toast from "react-hot-toast";
+import { useSWRConfig } from "swr";
 
 const MessageInput = () => {
 	const [msgText, setMsgText] = useState("");
 	const { selectedConversation } = useConversationStore();
 	const { ref, isComponentVisible, setIsComponentVisible } = useComponentVisible(false);
-
-	const me = useQuery(api.users.getMe);
-	const sendTextMsg = useMutation(api.messages.sendTextMessage);
+	const { mutate } = useSWRConfig();
 
 	const handleSendTextMsg = async (e: React.FormEvent) => {
 		e.preventDefault();
+		if (!selectedConversation || msgText.trim().length === 0) return;
 		try {
-			await sendTextMsg({ content: msgText, conversation: selectedConversation!._id, sender: me!._id });
+			await authedFetch("/messages", {
+				method: "POST",
+				body: JSON.stringify({
+					conversationId: selectedConversation.id,
+					content: msgText,
+					messageType: "text",
+				}),
+			});
+
+			await mutate(`/messages/${selectedConversation.id}`);
 			setMsgText("");
 		} catch (err: any) {
-			toast.error(err.message);
+			toast.error(err.message ?? "Failed to send message");
 			console.error(err);
 		}
 	};
 	return (
 		<div className='bg-gray-primary p-2 flex gap-4 items-center'>
 			<div className='relative flex gap-2 ml-2'>
-				{/* EMOJI PICKER WILL GO HERE */}
 				<div ref={ref} onClick={() => setIsComponentVisible(true)}>
 					{isComponentVisible && (
 						<EmojiPicker

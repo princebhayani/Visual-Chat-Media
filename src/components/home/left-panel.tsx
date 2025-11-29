@@ -1,55 +1,51 @@
 "use client";
-import { ListFilter, Search} from "lucide-react";
+
+import { ListFilter, Search } from "lucide-react";
 import { Input } from "../ui/input";
 import ThemeSwitch from "./theme-switch";
 import Conversation from "./conversation";
-import { UserButton } from "@clerk/nextjs";
 import UserListDialog from "./user-list-dialog";
-import { useConvexAuth, useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
 import { useEffect } from "react";
 import { useConversationStore } from "@/store/chat-store";
+import UserMenu from "@/components/auth/user-menu";
+import { useFirebaseAuthContext } from "@/providers/firebase-auth-provider";
+import { useAuthedSWR } from "@/hooks/useAuthedSWR";
+import { mapConversation, type BackendConversation } from "@/lib/chat-mappers";
+import { useMemo } from "react";
 
 const LeftPanel = () => {
-	const { isAuthenticated, isLoading } = useConvexAuth();
-	const conversations = useQuery(api.conversations.getMyConversations, 
-	isAuthenticated ? undefined : "skip");
+	const { user, isLoading } = useFirebaseAuthContext();
+	const { data: rawConversations } = useAuthedSWR<BackendConversation[]>(user ? "/conversations" : null);
+	const { data: me } = useAuthedSWR(user ? "/users/me" : null);
+
+	const conversations = useMemo(
+		() => rawConversations?.map((conversation) => mapConversation(conversation, user?.uid)),
+		[rawConversations, user?.uid]
+	);
 
 	const { selectedConversation, setSelectedConversation } = useConversationStore();
 
 	useEffect(() => {
-		const conversationIds = conversations?.map((conversation) => conversation._id);
-		if (selectedConversation && conversationIds && !conversationIds.includes(selectedConversation._id)) {
+		const conversationIds = conversations?.map((conversation) => conversation.id);
+		if (selectedConversation && conversationIds && !conversationIds.includes(selectedConversation.id)) {
 			setSelectedConversation(null);
 		}
 	}, [conversations, selectedConversation, setSelectedConversation]);
 
 	if (isLoading) return null;
-	
+
 	return (
 		<div className='w-1/4 border-gray-600 border-r'>
 			<div className='sticky top-0 bg-left-panel z-10'>
 				{/* Header */}
 				<div className='flex justify-between bg-gray-primary p-3 items-center'>
-					{/* <User size={24} /> */}
-					<UserButton />
-					
-					{/* <SignedIn>
-						<SignOutButton />
-					</SignedIn>
-
-					<SignedOut>
-						<SignInButton />
-					</SignedOut> */}
-
+					<UserMenu />
 					<div className='flex items-center gap-3'>
-						{isAuthenticated && <UserListDialog />}
+						{user && <UserListDialog currentUser={me} />}
 						<ThemeSwitch />
-						{/* <LogOut size={20} className='cursor-pointer' /> */}
 					</div>
 				</div>
 				<div className='p-3 flex items-center'>
-					{/* Search */}
 					<div className='relative h-10 mx-3 flex-1'>
 						<Search
 							className='absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 z-10'
@@ -65,13 +61,11 @@ const LeftPanel = () => {
 				</div>
 			</div>
 
-			{/* Chat List */}
 			<div className='my-3 flex flex-col gap-0 max-h-[80%] overflow-auto'>
-				{/* Conversations will go here*/}
 				{conversations?.map((conversation) => (
-					<Conversation key={conversation._id} conversation={conversation} />
+					<Conversation key={conversation.id} conversation={conversation} currentUserFirebaseUid={user?.uid ?? ""} />
 				))}
-				{conversations?.length === 0 && (
+				{conversations && conversations.length === 0 && (
 					<>
 						<p className='text-center text-gray-500 text-sm mt-3'>No conversations yet</p>
 						<p className='text-center text-gray-500 text-sm mt-3 '>
