@@ -113,6 +113,13 @@ export default function VideoCallRoom() {
 
 					newSocket.on("user-joined", async (data: { userId: string; socketId: string }) => {
 						console.log("User joined:", data);
+						
+						// Ensure socket has an ID before proceeding
+						if (!newSocket.id) {
+							console.error("Socket ID not available, cannot create peer connection");
+							return;
+						}
+						
 						// Check if peer connection already exists to avoid duplicates
 						if (peersRef.current.has(data.socketId)) {
 							console.log("Peer connection already exists for:", data.socketId);
@@ -168,7 +175,7 @@ export default function VideoCallRoom() {
 								console.log(`✅ Added ${track.kind} track to existing peer connection`);
 								
 								// If we're the initiator and haven't created offer yet, create it now
-								if (peer.peerConnection.signalingState === "stable" && newSocket.id < peer.socketId) {
+								if (peer.peerConnection.signalingState === "stable" && newSocket.id && newSocket.id < peer.socketId) {
 									createOfferForPeer(peer, newSocket);
 								}
 							}
