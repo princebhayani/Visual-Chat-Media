@@ -96,6 +96,10 @@ The app supports both **video** and **audio-only** calls:
    - Call type (video or audio)
    - Accept or Decline options
 
+## Documentation
+
+For comprehensive documentation covering architecture, features, deployment, and best practices, see **[DOCUMENTATION.md](./DOCUMENTATION.md)**.
+
 ## Notes for Contributors
 
 - `server/src` contains the Express API plus Prisma database layer.

@@ -8,6 +8,7 @@ import authRoutes from "./routes/auth";
 import usersRoutes from "./routes/users";
 import conversationsRoutes from "./routes/conversations";
 import messagesRoutes from "./routes/messages";
+import callsRoutes from "./routes/calls";
 import { authenticateFirebase } from "./middleware/authenticate";
 import { setupSocketIO } from "./socket/socket-handler";
 
@@ -47,6 +48,7 @@ app.use(authenticateFirebase);
 app.use("/users", usersRoutes);
 app.use("/conversations", conversationsRoutes);
 app.use("/messages", messagesRoutes);
+app.use("/calls", callsRoutes);
 
 setupSocketIO(io);
 

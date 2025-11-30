@@ -17,6 +17,8 @@ model User {
   conversations ConversationParticipant[]
   adminOfConversations Conversation[]     @relation("ConversationAdmin")
   messages     Message[]
+  createdCallRooms CallRoom[]             @relation("CallRoomCreator")
+  callParticipants CallParticipant[]
   createdAt    DateTime                   @default(now())
   updatedAt    DateTime                   @updatedAt
 }
@@ -30,6 +32,7 @@ model Conversation {
   admin         User?                      @relation("ConversationAdmin", fields: [adminId], references: [id])
   participants  ConversationParticipant[]
   messages      Message[]
+  callRooms     CallRoom[]
   lastMessageAt DateTime                   @default(now())
   createdAt     DateTime                   @default(now())
   updatedAt     DateTime                   @updatedAt
@@ -61,5 +64,84 @@ enum MessageType {
   TEXT
   IMAGE
   VIDEO
+}
+
+
+
+model CallRoom {
+  id            String   @id @default(uuid())
+  conversationId String? // Link to conversation
+  conversation  Conversation? @relation(fields: [conversationId], references: [id])
+  callType      CallType // VIDEO, AUDIO
+  status        CallStatus @default(ACTIVE) // ACTIVE, ENDED, CANCELLED
+  startedAt     DateTime @default(now())
+  endedAt       DateTime?
+  sfuRoomId     String?  // SFU room identifier (mediasoup/LiveKit room ID)
+  sfuServerUrl  String?  // SFU server URL
+  createdById   String   // User ID of creator
+  creator       User?    @relation("CallRoomCreator", fields: [createdById], references: [id])
+  
+  // Recording
+  isRecording   Boolean  @default(false)
+  recordingUrl  String?
+  
+  participants  CallParticipant[]
+  
+  @@index([conversationId])
+  @@index([status])
+  @@index([sfuRoomId])
+  @@index([createdById])
+}
+
+model CallParticipant {
+  id            String   @id @default(uuid())
+  callRoomId    String
+  userId        String
+  user          User?    @relation(fields: [userId], references: [id])
+  joinedAt      DateTime @default(now())
+  leftAt        DateTime?
+  
+  // SFU identifiers
+  transportId   String?  // SFU transport identifier
+  producerIds   String[] // Audio, video, screen share producer IDs
+  consumerIds   String[] // Subscribed stream consumer IDs
+  
+  // Media state
+  isAudioEnabled Boolean @default(true)
+  isVideoEnabled Boolean @default(true)
+  isScreenSharing Boolean @default(false)
+  
+  // Active speaker (last time spoke)
+  lastActiveAt  DateTime?
+  
+  // Quality metrics
+  connectionQuality String? // excellent, good, fair, poor
+  packetLoss    Float?
+  rtt           Float? // Round-trip time in ms
+  jitter        Float?
+  
+  // Call statistics
+  audioBytesSent    BigInt?
+  audioBytesReceived BigInt?
+  videoBytesSent    BigInt?
+  videoBytesReceived BigInt?
+  
+  callRoom      CallRoom @relation(fields: [callRoomId], references: [id], onDelete: Cascade)
+  
+  @@unique([callRoomId, userId])
+  @@index([callRoomId])
+  @@index([userId])
+  @@index([lastActiveAt])
+}
+
+enum CallType {
+  VIDEO
+  AUDIO
+}
+
+enum CallStatus {
+  ACTIVE
+  ENDED
+  CANCELLED
 }
 
