@@ -277,7 +277,7 @@ export default function VideoCallRoomEnhanced() {
 		}
 
 		// Determine initiator (lower socket ID)
-		const isInitiator = socket.id < socketId;
+		const isInitiator = socket.id ? socket.id < socketId : false;
 
 		// Create peer connection manager
 		const manager = new PeerConnectionManager({
