@@ -95,7 +95,7 @@ export class CPUMonitor {
 			let framesEncoded = 0;
 			let framesSent = 0;
 
-			for (const [_, stat] of stats) {
+			for (const [_, stat] of Array.from(stats)) {
 				if (stat.type === 'media-source') {
 					const source = stat as RTCAudioSourceStats | RTCVideoSourceStats;
 					

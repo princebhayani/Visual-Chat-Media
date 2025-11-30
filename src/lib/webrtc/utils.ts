@@ -126,7 +126,7 @@ export function getConnectionType(candidate: RTCIceCandidate): 'host' | 'srflx' 
  * Check if connection is using TURN
  */
 export function isUsingTurn(stats: RTCStatsReport): boolean {
-	for (const [_, stat] of stats) {
+	for (const [_, stat] of Array.from(stats)) {
 		if (stat.type === 'candidate-pair' && stat.state === 'succeeded') {
 			const localCandidate = stats.get(stat.localCandidateId as string);
 			const remoteCandidate = stats.get(stat.remoteCandidateId as string);
@@ -163,7 +163,7 @@ export async function getConnectionQuality(
 			bitrate: 0,
 		};
 
-		for (const [_, stat] of stats) {
+		for (const [_, stat] of Array.from(stats)) {
 			if (stat.type === 'inbound-rtp' || stat.type === 'outbound-rtp') {
 				const rtpStat = stat as RTCInboundRtpStreamStats | RTCOutboundRtpStreamStats;
 				

@@ -163,7 +163,7 @@ export function GroupCallRoom({
 	/**
 	 * Setup SFU event listeners
 	 */
-	const setupSFUEventListeners = (sfuClient: SFUClient): void {
+	const setupSFUEventListeners = (sfuClient: SFUClient): void => {
 		const socket = sfuClient.getSocket();
 
 		socket.on('new-producer', (producer: any) => {

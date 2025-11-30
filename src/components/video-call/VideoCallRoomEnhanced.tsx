@@ -126,6 +126,12 @@ export default function VideoCallRoomEnhanced() {
 	 * Initialize call with all improvements
 	 */
 	const initializeCall = async () => {
+		// Early return if user is not available
+		if (!user) {
+			console.error("Cannot initialize call: user not available");
+			return;
+		}
+
 		try {
 			const roomId = getUrlParams().get("roomID") || selectedConversation?.id || "default-room";
 			const callId = getUrlParams().get("callId") || "";
@@ -189,6 +195,7 @@ export default function VideoCallRoomEnhanced() {
 				// Log call start
 				callLogger.startCall({
 					callId: callId || `${roomId}-${Date.now()}`,
+					startTime: Date.now(),
 					participants: [],
 					callType: urlCallType,
 					connectionQuality: [],
@@ -276,8 +283,11 @@ export default function VideoCallRoomEnhanced() {
 			return;
 		}
 
+		// Store socket ID to ensure TypeScript knows it's defined
+		const currentSocketId = socket.id;
+
 		// Determine initiator (lower socket ID)
-		const isInitiator = socket.id ? socket.id < socketId : false;
+		const isInitiator = currentSocketId < socketId;
 
 		// Create peer connection manager
 		const manager = new PeerConnectionManager({
@@ -554,7 +564,7 @@ export default function VideoCallRoomEnhanced() {
 		mediaHandlerRef.current.toggleAudio(enabled);
 
 		// Update all peer connections
-		for (const manager of peerManagersRef.current.values()) {
+		for (const manager of Array.from(peerManagersRef.current.values())) {
 			const senders = manager.getSenders();
 			const audioSender = senders.find((s) => s.track?.kind === "audio");
 			if (audioSender) {
@@ -574,7 +584,7 @@ export default function VideoCallRoomEnhanced() {
 		mediaHandlerRef.current.toggleVideo(enabled);
 
 		// Update all peer connections
-		for (const manager of peerManagersRef.current.values()) {
+		for (const manager of Array.from(peerManagersRef.current.values())) {
 			const senders = manager.getSenders();
 			const videoSender = senders.find((s) => s.track?.kind === "video");
 			if (videoSender) {
@@ -631,7 +641,7 @@ export default function VideoCallRoomEnhanced() {
 			const config = getOptimalEncodingConfig(contentType, connectionQuality);
 
 			// Switch to screen share using seamless switcher
-			for (const [socketId, switcher] of streamSwitcherRef.current) {
+			for (const [socketId, switcher] of Array.from(streamSwitcherRef.current)) {
 				const track = await switcher.switchToScreenShare({
 					onSwitchStart: () => console.log("Starting screen share..."),
 					onSwitchComplete: () => {

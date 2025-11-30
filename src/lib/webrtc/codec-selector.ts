@@ -47,12 +47,11 @@ export function getAvailableCodecs(): CodecInfo[] {
 			if (codec.mimeType.startsWith('video/')) {
 				const type = getCodecType(codec.mimeType);
 				if (type) {
-					codecs.push({
-						mimeType: codec.mimeType,
-						type,
-						sdpFmtpLine: codec.sdpFmtpLine,
-						preferredPayloadType: codec.preferredPayloadType,
-					});
+				codecs.push({
+					mimeType: codec.mimeType,
+					type,
+					sdpFmtpLine: codec.sdpFmtpLine,
+				});
 				}
 			}
 		}
@@ -175,14 +174,14 @@ export async function setCodecPreference(
 					params.codecs = [];
 				}
 
-				// Find codec in available codecs
-				const capabilities = RTCRtpSender.getCapabilities('video');
-				const selectedCodec = capabilities?.codecs.find(
+				// Find codec in params and move to front
+				const existingCodecIndex = params.codecs.findIndex(
 					(c) => c.mimeType === codec.mimeType
 				);
 
-				if (selectedCodec) {
+				if (existingCodecIndex !== -1) {
 					// Move preferred codec to front
+					const selectedCodec = params.codecs[existingCodecIndex];
 					params.codecs = params.codecs.filter((c) => c.mimeType !== codec.mimeType);
 					params.codecs.unshift(selectedCodec);
 
@@ -209,13 +208,13 @@ export async function getCodecStats(
 	try {
 		const stats = await peerConnection.getStats();
 		
-		for (const [_, stat] of stats) {
+		for (const [_, stat] of Array.from(stats)) {
 			if (stat.type === 'outbound-rtp' || stat.type === 'inbound-rtp') {
 				const rtpStat = stat as RTCOutboundRtpStreamStats | RTCInboundRtpStreamStats;
 				if (rtpStat.codecId) {
 					const codecStat = stats.get(rtpStat.codecId);
 					if (codecStat && codecStat.type === 'codec') {
-						const codec = codecStat as RTCCodecStats;
+						const codec = codecStat as any;
 						const type = getCodecType(codec.mimeType);
 						return {
 							codec: codec.mimeType,

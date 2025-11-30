@@ -225,7 +225,6 @@ export class AdaptiveBitrateController {
 			// Update all encodings (for simulcast)
 			params.encodings.forEach((encoding) => {
 				encoding.maxBitrate = bitrate.max;
-				encoding.minBitrate = bitrate.min;
 				encoding.maxFramerate = frameRate.max;
 			});
 

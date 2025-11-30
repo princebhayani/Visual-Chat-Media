@@ -54,6 +54,9 @@ export class SignalingClient {
 	 * Create base event data
 	 */
 	private createBaseEventData(): Omit<SignalingEvent, 'type' | 'data'> {
+		if (!this.socket.id) {
+			throw new Error("Socket ID not available");
+		}
 		return createBaseEvent(this.roomId, this.userId, this.socket.id);
 	}
 
@@ -253,7 +256,7 @@ export class SignalingClient {
 	// Event Listeners
 
 	on<T extends SignalingEvent>(eventType: T['type'], callback: EventCallback<T['data']>): void {
-		this.socket.on(eventType, (event: T) => {
+		(this.socket as any).on(eventType, (event: T) => {
 			// Acknowledge receipt
 			if (event.messageId) {
 				this.socket.emit('event:ack', {
@@ -276,7 +279,7 @@ export class SignalingClient {
 	}
 
 	once<T extends SignalingEvent>(eventType: T['type'], callback: EventCallback<T['data']>): void {
-		this.socket.once(eventType, (event: T) => {
+		(this.socket as any).once(eventType, (event: T) => {
 			// Acknowledge receipt
 			if (event.messageId) {
 				this.socket.emit('event:ack', {
@@ -306,6 +309,9 @@ export class SignalingClient {
 	 * Get socket ID
 	 */
 	getSocketId(): string {
+		if (!this.socket.id) {
+			throw new Error("Socket ID not available");
+		}
 		return this.socket.id;
 	}
 

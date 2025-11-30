@@ -55,13 +55,13 @@ export function useActiveSpeaker(
 			const levels = new Map<string, number>();
 
 			// Analyze audio levels for each peer connection
-			for (const [socketId, peerConnection] of peerConnectionsRef.current) {
+			for (const [socketId, peerConnection] of Array.from(peerConnectionsRef.current)) {
 				try {
 					const stats = await peerConnection.getStats();
 					
-					for (const [_, stat] of stats) {
+					for (const [_, stat] of Array.from(stats)) {
 						if (stat.type === "media-source" || stat.type === "inbound-rtp") {
-							const audioStat = stat as RTCAudioSourceStats | RTCInboundRtpStreamStats;
+							const audioStat = stat as any;
 							
 							// Get audio level if available
 							if ("audioLevel" in audioStat && audioStat.audioLevel !== undefined) {

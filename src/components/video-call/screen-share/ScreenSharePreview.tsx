@@ -8,7 +8,7 @@
 "use client";
 
 import { useState } from "react";
-import { Monitor, Layout, Window, ArrowRight } from "lucide-react";
+import { Monitor, Layout, Square, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -51,7 +51,7 @@ export function ScreenSharePreview({
 						<div className="grid grid-cols-3 gap-2">
 							{[
 								{ value: "monitor" as const, label: "Entire Screen", icon: Monitor },
-								{ value: "window" as const, label: "Window", icon: Window },
+								{ value: "window" as const, label: "Window", icon: Square },
 								{ value: "browser" as const, label: "Browser Tab", icon: Layout },
 							].map(({ value, label, icon: Icon }) => (
 								<button
