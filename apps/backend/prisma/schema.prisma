@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ────────────────────────────────────────────────────────────────────
+
+enum ConversationType {
+  DIRECT
+  GROUP
+  AI_CHAT
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+  SYSTEM
+  AI_RESPONSE
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+}
+
+enum CallType {
+  AUDIO
+  VIDEO
+}
+
+enum CallStatus {
+  RINGING
+  ACTIVE
+  ENDED
+  MISSED
+  REJECTED
+}
+
+enum NotificationType {
+  NEW_MESSAGE
+  MENTION
+  CALL_MISSED
+  GROUP_INVITE
+  AI_COMPLETE
+}
+
+// ─── USER ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String               @id @default(uuid())
+  email         String               @unique
+  name          String
+  avatarUrl     String?
+  passwordHash  String
+  bio           String?
+  status        String?              @default("Available")
+  lastSeenAt    DateTime?
+  isOnline      Boolean              @default(false)
+
+  // Relations
+  memberships        ConversationMember[]
+  sentMessages       Message[]           @relation("sender")
+  conversationsCreated Conversation[]    @relation("conversationCreator")
+  blockedUsers       Block[]             @relation("blocker")
+  blockedBy          Block[]             @relation("blocked")
+  callsInitiated     Call[]              @relation("caller")
+  callsReceived      Call[]              @relation("callee")
+  notifications      Notification[]
+  reactions          Reaction[]
+
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([email])
+}
+
+// ─── CONVERSATION ─────────────────────────────────────────────────────────────
+
+model Conversation {
+  id           String             @id @default(uuid())
+  type         ConversationType   @default(AI_CHAT)
+  title        String             @default("New Chat")
+  groupName    String?
+  groupAvatar  String?
+  description  String?
+  systemPrompt String?
+
+  // Creator reference
+  createdById  String
+  createdBy    User               @relation("conversationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  // Relations
+  members      ConversationMember[]
+  messages     Message[]
+  calls        Call[]
+
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([createdById])
+  @@index([updatedAt])
+  @@index([type])
+}
+
+// ─── CONVERSATION MEMBER ──────────────────────────────────────────────────────
+
+model ConversationMember {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           MemberRole   @default(MEMBER)
+  isPinned       Boolean      @default(false)
+  isMuted        Boolean      @default(false)
+  lastReadAt     DateTime?
+  joinedAt       DateTime     @default(now())
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+// ─── MESSAGE ──────────────────────────────────────────────────────────────────
+
+model Message {
+  id             String        @id @default(uuid())
+  content        String
+  type           MessageType   @default(TEXT)
+  status         MessageStatus @default(SENT)
+  conversationId String
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  // Sender (null = system message or AI)
+  senderId       String?
+  sender         User?         @relation("sender", fields: [senderId], references: [id], onDelete: SetNull)
+
+  // Reply threading
+  replyToId      String?
+  replyTo        Message?      @relation("replies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies        Message[]     @relation("replies")
+
+  // Attachments & reactions
+  attachments    Attachment[]
+  reactions      Reaction[]
+
+  // Metadata
+  isEdited       Boolean       @default(false)
+  isDeleted      Boolean       @default(false)
+  deletedAt      DateTime?
+  tokenCount     Int?
+  createdAt      DateTime      @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+// ─── ATTACHMENT ───────────────────────────────────────────────────────────────
+
+model Attachment {
+  id           String   @id @default(uuid())
+  messageId    String
+  message      Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  fileName     String
+  fileUrl      String
+  fileSize     Int
+  mimeType     String
+  thumbnailUrl String?
+  width        Int?
+  height       Int?
+  duration     Int?     // for audio/video in seconds
+  createdAt    DateTime @default(now())
+
+  @@index([messageId])
+}
+
+// ─── REACTION ─────────────────────────────────────────────────────────────────
+
+model Reaction {
+  id        String   @id @default(uuid())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String
+  createdAt DateTime @default(now())
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+}
+
+// ─── BLOCK ────────────────────────────────────────────────────────────────────
+
+model Block {
+  id        String   @id @default(uuid())
+  blockerId String
+  blocker   User     @relation("blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId String
+  blocked   User     @relation("blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+}
+
+// ─── CALL ─────────────────────────────────────────────────────────────────────
+
+model Call {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  callerId       String
+  caller         User         @relation("caller", fields: [callerId], references: [id], onDelete: Cascade)
+  calleeId       String
+  callee         User         @relation("callee", fields: [calleeId], references: [id], onDelete: Cascade)
+  type           CallType
+  status         CallStatus   @default(RINGING)
+  startedAt      DateTime?
+  endedAt        DateTime?
+  duration       Int?         // seconds
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([callerId])
+  @@index([calleeId])
+}
+
+// ─── NOTIFICATION ─────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+}
