@@ -1,6 +1,6 @@
 # Architecture Guide
 
-A comprehensive deep-dive into the system architecture of the AI Chat Application.
+A comprehensive deep-dive into the system architecture of the Visual Chat platform.
 
 ---
 
@@ -21,842 +21,633 @@ A comprehensive deep-dive into the system architecture of the AI Chat Applicatio
 ## High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         CLIENT (Browser)                            │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                    Next.js 14 (App Router)                   │   │
-│  │                                                              │   │
-│  │  ┌─────────────┐  ┌──────────────┐  ┌────────────────────┐   │   │
-│  │  │  Zustand    │  │  Socket.IO   │  │  API Client        │   │   │
-│  │  │  Stores (4) │  │  Client      │  │  (fetch + refresh) │   │   │
-│  │  └──────┬──────┘  └──────┬───────┘  └────────┬───────────┘   │   │
-│  │         │                │                    │               │  │
-│  └─────────┼────────────────┼────────────────────┼───────────────┘  │
-│            │                │                    │                   │
-└────────────┼────────────────┼────────────────────┼───────────────────┘
-             │                │                    │
-             │          WebSocket              HTTP REST
-             │           (wss://)              (https://)
-             │                │                    │
-┌────────────┼────────────────┼────────────────────┼───────────────────┐
-│            │          SERVER (Node.js)           │                   │
-│            │                │                    │                   │
-│  ┌─────────┼────────────────┼────────────────────┼───────────────┐  │
-│  │         │         ┌──────┴───────┐   ┌───────┴────────────┐  │  │
-│  │         │         │  Socket.IO   │   │   Express Server   │  │  │
-│  │         │         │  Server      │   │                    │  │  │
-│  │         │         │  ┌─────────┐ │   │  ┌──────────────┐  │  │  │
-│  │         │         │  │ Rooms   │ │   │  │  Middleware  │  │  │  │
-│  │         │         │  │ (conv.) │ │   │  │  Pipeline    │  │  │  │
-│  │         │         │  └─────────┘ │   │  └──────────────┘  │  │  │
-│  │         │         └──────┬───────┘   │  ┌──────────────┐  │  │  │
-│  │         │                │           │  │  Features    │  │  │  │
-│  │         │                │           │  │  (auth/chat) │  │  │  │
-│  │         │                │           │  └──────────────┘  │  │  │
-│  │         │                │           └────────┬───────────┘  │  │
-│  │         │                │                    │              │  │
-│  │         │         ┌──────┴────────────────────┴──────────┐   │  │
-│  │         │         │           AI Service                 │   │  │
-│  │         │         │  ┌──────────────┐  ┌──────────────┐  │   │  │
-│  │         │         │  │   Context    │  │   Gemini     │  │   │  │
-│  │         │         │  │   Manager    │──│   Streaming  │  │   │  │
-│  │         │         │  └──────────────┘  └──────────────┘  │   │  │
-│  │         │         └──────────────────────────────────────┘   │  │
-│  └─────────┼───────────────────────────────────────────────────┘   │
-│            │                                                       │
-└────────────┼───────────────────────────────────────────────────────┘
-             │
-    ┌────────┼────────────────────────────────────┐
-    │        │          DATA LAYER                 │
-    │  ┌─────┴──────┐          ┌───────────────┐  │
-    │  │ PostgreSQL  │          │    Redis       │  │
-    │  │             │          │               │  │
-    │  │ - Users     │          │ - Refresh     │  │
-    │  │ - Convos    │          │   Tokens      │  │
-    │  │ - Messages  │          │ - Rate Limits │  │
-    │  └─────────────┘          └───────────────┘  │
-    └─────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                           CLIENT (Browser)                                │
+│                                                                           │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │                      Next.js 14 (App Router)                        │  │
+│  │                                                                     │  │
+│  │  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────┐  │  │
+│  │  │  Zustand     │  │  Socket.IO   │  │  API Client  │  │ WebRTC  │  │  │
+│  │  │  Stores (7)  │  │  Client      │  │  (fetch +    │  │ Peer    │  │  │
+│  │  │             │  │              │  │   refresh)   │  │ Conn.   │  │  │
+│  │  └──────┬──────┘  └──────┬───────┘  └──────┬───────┘  └────┬────┘  │  │
+│  └─────────┼────────────────┼──────────────────┼───────────────┼───────┘  │
+│            │                │                  │               │          │
+└────────────┼────────────────┼──────────────────┼───────────────┼──────────┘
+             │           WebSocket           HTTP REST       P2P Media
+             │           (wss://)            (https://)      (SRTP/DTLS)
+             │                │                  │               │
+┌────────────┼────────────────┼──────────────────┼───────────────┼──────────┐
+│            │          SERVER (Node.js)         │               │          │
+│            │                │                  │               │          │
+│  ┌─────────┼────────────────┼──────────────────┼───────────────┼───────┐  │
+│  │         │         ┌──────┴───────┐   ┌──────┴────────────┐  │       │  │
+│  │         │         │  Socket.IO   │   │   Express Server  │  │       │  │
+│  │         │         │  Server      │   │                   │  │       │  │
+│  │         │         │  ┌─────────┐ │   │  ┌──────────────┐ │  │       │  │
+│  │         │         │  │ Rooms:  │ │   │  │  Middleware   │ │  │       │  │
+│  │         │         │  │ conv:id │ │   │  │  Pipeline     │ │  │       │  │
+│  │         │         │  │ user:id │ │   │  └──────────────┘ │  │       │  │
+│  │         │         │  └─────────┘ │   │  ┌──────────────┐ │  │       │  │
+│  │         │         │  ┌─────────┐ │   │  │  Features:   │ │  │       │  │
+│  │         │         │  │Handlers:│ │   │  │  auth        │ │  │       │  │
+│  │         │         │  │ chat    │ │   │  │  chat        │ │  │       │  │
+│  │         │         │  │ call    │ │   │  │  ai          │ │  │       │  │
+│  │         │         │  └─────────┘ │   │  │  user        │ │  │       │  │
+│  │         │         └──────┬───────┘   │  │  upload      │ │  │       │  │
+│  │         │                │           │  │  call        │ │  │       │  │
+│  │         │                │           │  │  notification│ │  │       │  │
+│  │         │                │           │  └──────────────┘ │  │       │  │
+│  │         │                │           └────────┬──────────┘  │       │  │
+│  │         │         ┌──────┴────────────────────┴──────────┐  │       │  │
+│  │         │         │            AI Service                │  │       │  │
+│  │         │         │  ┌──────────────┐  ┌──────────────┐  │  │       │  │
+│  │         │         │  │   Context    │  │   Gemini     │  │  │       │  │
+│  │         │         │  │   Manager    │──│   Streaming  │  │  │       │  │
+│  │         │         │  └──────────────┘  └──────────────┘  │  │       │  │
+│  │         │         └──────────────────────────────────────┘  │       │  │
+│  └─────────┼──────────────────────────────────────────────────┘       │  │
+│            │                                                          │  │
+└────────────┼──────────────────────────────────────────────────────────┘  │
+             │                                                             │
+    ┌────────┼─────────────────────────────────────────────────┐           │
+    │        │             DATA LAYER                          │           │
+    │  ┌─────┴──────┐   ┌───────────────┐   ┌─────────────┐   │           │
+    │  │ PostgreSQL  │   │    Redis       │   │   File      │   │           │
+    │  │             │   │               │   │   Storage   │   │           │
+    │  │ 9 Models    │   │ - Refresh     │   │             │   │           │
+    │  │ 7 Enums     │   │   Tokens      │   │ - Images    │   │           │
+    │  │             │   │ - Rate Limits │   │ - Videos    │   │           │
+    │  │ - Users     │   │ - Presence    │   │ - Audio     │   │           │
+    │  │ - Convos    │   │               │   │ - Documents │   │           │
+    │  │ - Messages  │   │               │   │             │   │           │
+    │  │ - Calls     │   │               │   │ (Multer +   │   │           │
+    │  │ - Notifs    │   │               │   │  Sharp)     │   │           │
+    │  └─────────────┘   └───────────────┘   └─────────────┘   │           │
+    └──────────────────────────────────────────────────────────┘           │
+                                                                           │
+    ┌──────────────────────────────┐                                        │
+    │      STUN/TURN Servers       │◄───────────────────────────────────────┘
+    │  (ICE Candidate Discovery)   │
+    └──────────────────────────────┘
 ```
 
 ---
 
 ## Monorepo Design
 
-### Why npm Workspaces
-
-The project uses **npm workspaces** (native to npm 7+) for monorepo management. This was chosen over alternatives like Turborepo, Nx, or Lerna for simplicity and zero additional tooling.
-
-### Workspace Layout
-
 ```
-visual-chat-media2/
-├── packages/
-│   └── shared/          # @ai-chat/shared — types, schemas, constants
-└── apps/
-    ├── backend/         # @ai-chat/backend — Express + Socket.IO
-    └── frontend/        # @ai-chat/frontend — Next.js 14
+visual-chat-media2/                   # npm workspaces root
+├── packages/shared/                  # @ai-chat/shared — types, schemas, constants
+├── apps/backend/                     # @ai-chat/backend — Express + Socket.IO
+└── apps/frontend/                    # @ai-chat/frontend — Next.js 14
 ```
 
-### How Workspaces Connect
+### Workspace Dependencies
 
 ```
-                    ┌──────────────────┐
-                    │  @ai-chat/shared │
-                    │                  │
-                    │  Types:          │
-                    │  - User          │
-                    │  - Message       │
-                    │  - Conversation  │
-                    │  - SocketEvents  │
-                    │                  │
-                    │  Schemas (Zod):  │
-                    │  - signupSchema  │
-                    │  - loginSchema   │
-                    │  - etc.          │
-                    │                  │
-                    │  Constants:      │
-                    │  - SOCKET_EVENTS │
-                    └────────┬─────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-              ▼              │              ▼
-   ┌──────────────────┐      │   ┌──────────────────┐
-   │ @ai-chat/backend │      │   │ @ai-chat/frontend│
-   │                  │◄─────┘   │                  │
-   │ import { ... }   │          │ import { ... }   │
-   │ from             │          │ from             │
-   │ '@ai-chat/shared'│          │ '@ai-chat/shared'│
-   └──────────────────┘          └──────────────────┘
+@ai-chat/frontend ──depends──► @ai-chat/shared
+@ai-chat/backend  ──depends──► @ai-chat/shared
 ```
 
-- **Backend** imports shared types for service/controller type safety, schemas for request validation, and socket event constants.
-- **Frontend** imports shared types for store/component type safety, schemas for client-side validation, and socket event constants for listeners.
-- Next.js uses `transpilePackages: ['@ai-chat/shared']` to compile the shared package.
+### Build Chain
 
-### TypeScript Configuration
+1. `packages/shared` — pure TypeScript, no build step (consumed as source via `transpilePackages`)
+2. `apps/backend` — compiled by `tsx` (dev) or `tsc` (production) to CommonJS
+3. `apps/frontend` — compiled by Next.js (webpack/turbopack) to optimized bundles
 
-```
-tsconfig.base.json (root)
-├── strict: true
-├── target: ES2022
-├── moduleResolution: bundler
-│
-├── apps/backend/tsconfig.json
-│   ├── extends: ../../tsconfig.base.json
-│   ├── module: CommonJS        ← Required for Express/Node
-│   └── moduleResolution: node  ← Required for Node packages
-│
-├── apps/frontend/tsconfig.json
-│   ├── extends: ../../tsconfig.base.json
-│   ├── module: ESNext          ← Next.js uses ESM
-│   ├── jsx: preserve           ← Next.js handles JSX
-│   └── paths: @/* → ./src/*   ← Import alias
-│
-└── packages/shared/tsconfig.json
-    └── extends: ../../tsconfig.base.json
-```
+### Shared Configuration
+
+- `tsconfig.base.json` — common TS config (strict mode, ES2022, path aliases)
+- `.env` — single environment file at root, consumed by both apps
+- `.gitignore` — shared ignore rules (node_modules, dist, .next, uploads)
 
 ---
 
 ## Data Flow Diagrams
 
-### Authentication Flow
+### 1. Authentication Flow
 
 ```
-┌──────────┐     POST /api/auth/signup       ┌──────────┐
-│          │  ──────────────────────────────► │          │
-│  Client  │  { name, email, password }       │  Server  │
-│          │                                  │          │
-│          │  ◄──────────────────────────────  │          │
-│          │  { user, tokens: {               │          │
-│          │    accessToken (15min),           │          │
-│          │    refreshToken (7d)              │          │
-│          │  }}                               │          │
-└──────────┘                                  └──────────┘
-     │                                              │
-     │  Store tokens in                             │  Store refresh
-     │  localStorage                                │  token in Redis
-     │                                              │  key: refresh:{userId}
-     ▼                                              ▼
-
-  ─ ─ ─ ─ ─ ─ ─ ─  15 minutes later  ─ ─ ─ ─ ─ ─ ─ ─
-
-┌──────────┐     API call with expired       ┌──────────┐
-│          │  ──────────────────────────────► │          │
-│  Client  │  Authorization: Bearer <token>   │  Server  │
-│          │                                  │          │
-│          │  ◄──────────────────────────────  │          │
-│          │  401 Unauthorized                │          │
-│          │                                  │          │
-│          │     POST /api/auth/refresh       │          │
-│          │  ──────────────────────────────► │          │
-│          │  { refreshToken }                │          │  Verify token exists
-│          │                                  │          │  in Redis. Issue new
-│          │  ◄──────────────────────────────  │          │  pair. Store new
-│          │  { user, tokens (new pair) }      │          │  refresh in Redis.
-│          │                                  │          │
-│          │     Retry original request       │          │
-│          │  ──────────────────────────────► │          │
-└──────────┘                                  └──────────┘
+┌────────┐         ┌─────────┐         ┌──────────┐         ┌───────┐
+│ Client │         │ Express │         │ Auth     │         │ Redis │
+│        │         │         │         │ Service  │         │       │
+└───┬────┘         └────┬────┘         └────┬─────┘         └───┬───┘
+    │  POST /auth/login  │                  │                   │
+    │───────────────────►│  login(creds)     │                   │
+    │                    │─────────────────►│                   │
+    │                    │                  │ verify password    │
+    │                    │                  │ (bcrypt compare)   │
+    │                    │                  │                   │
+    │                    │                  │ generate tokens    │
+    │                    │                  │                   │
+    │                    │                  │  store refresh     │
+    │                    │                  │─────────────────►│
+    │                    │                  │                   │
+    │  { user, tokens }  │  { user, tokens} │                   │
+    │◄───────────────────│◄─────────────────│                   │
+    │                    │                  │                   │
+    │  Store in Zustand  │                  │                   │
+    │  + localStorage    │                  │                   │
 ```
 
-### Chat Message Flow (Send + AI Stream)
+### 2. Real-Time Chat Message Flow
 
 ```
- ┌────────┐         ┌────────────┐        ┌─────────┐       ┌────────┐
- │ Client │         │ Socket.IO  │        │ Backend │       │ Gemini │
- │        │         │  Server    │        │ Services│       │  API   │
- └───┬────┘         └─────┬──────┘        └────┬────┘       └───┬────┘
-     │                    │                    │                 │
-     │  send-message      │                    │                 │
-     │  {content, convId} │                    │                 │
-     │───────────────────►│                    │                 │
-     │                    │                    │                 │
-     │                    │  saveMessage()     │                 │
-     │                    │───────────────────►│                 │
-     │                    │  (save to DB)      │                 │
-     │                    │◄───────────────────│                 │
-     │                    │                    │                 │
-     │   new-message      │                    │                 │
-     │◄───────────────────│                    │                 │
-     │   (user's msg)     │                    │                 │
-     │                    │                    │                 │
-     │                    │  Auto-title check  │                 │
-     │                    │  (if "New Chat")   │                 │
-     │                    │───────────────────►│                 │
-     │                    │                    │                 │
-     │   ai-stream-start  │                    │                 │
-     │◄───────────────────│                    │                 │
-     │                    │                    │                 │
-     │                    │  streamAIResponse()│                 │
-     │                    │───────────────────►│                 │
-     │                    │                    │  buildContext() │
-     │                    │                    │  (trim to 20    │
-     │                    │                    │   msgs/30k ch)  │
-     │                    │                    │                 │
-     │                    │                    │  startChat()    │
-     │                    │                    │────────────────►│
-     │                    │                    │                 │
-     │                    │                    │  sendMessage    │
-     │                    │                    │  Stream()       │
-     │                    │                    │────────────────►│
-     │                    │                    │                 │
-     │                    │                    │  chunk 1        │
-     │                    │                    │◄────────────────│
-     │   ai-stream-chunk  │   onChunk()        │                 │
-     │◄───────────────────│◄───────────────────│                 │
-     │   "Hello"          │                    │                 │
-     │                    │                    │  chunk 2        │
-     │   ai-stream-chunk  │   onChunk()        │◄────────────────│
-     │◄───────────────────│◄───────────────────│                 │
-     │   ", how"          │                    │                 │
-     │                    │                    │  chunk N        │
-     │   ai-stream-chunk  │   onChunk()        │◄────────────────│
-     │◄───────────────────│◄───────────────────│                 │
-     │   " today?"        │                    │                 │
-     │                    │                    │  stream end     │
-     │                    │                    │◄────────────────│
-     │                    │  saveMessage()     │                 │
-     │                    │  (full AI content) │                 │
-     │                    │───────────────────►│                 │
-     │                    │                    │                 │
-     │   ai-stream-end    │                    │                 │
-     │◄───────────────────│                    │                 │
-     │   {content,        │                    │                 │
-     │    savedMessageId} │                    │                 │
-     │                    │                    │                 │
+┌──────────┐       ┌───────────┐       ┌──────────┐       ┌──────────┐
+│ Sender   │       │ Socket.IO │       │ Chat     │       │ Other    │
+│ Client   │       │ Server    │       │ Service  │       │ Clients  │
+└────┬─────┘       └─────┬─────┘       └────┬─────┘       └────┬─────┘
+     │  SEND_MESSAGE      │                  │                   │
+     │───────────────────►│  saveMessage()   │                   │
+     │                    │─────────────────►│                   │
+     │                    │                  │ Save to DB         │
+     │                    │                  │ + attachments      │
+     │                    │  saved message   │                   │
+     │                    │◄─────────────────│                   │
+     │                    │                  │                   │
+     │                    │  Detect @ai?     │                   │
+     │                    │  (case-insensitive)                  │
+     │                    │                  │                   │
+     │                    │  NEW_MESSAGE     │                   │
+     │◄───────────────────│─────────────────────────────────────►│
+     │                    │                  │                   │
+     │                    │  Offline users?  │                   │
+     │                    │  → Create notification               │
+     │                    │  → Emit to user:{userId} room        │
 ```
 
-### Stop Generation Flow
+### 3. AI Streaming Flow
 
 ```
- Client                   Socket.IO Server              AI Service
-   │                            │                            │
-   │  stop-generation           │                            │
-   │  {conversationId}          │                            │
-   │───────────────────────────►│                            │
-   │                            │                            │
-   │                            │  activeGenerations         │
-   │                            │  .get(convId)              │
-   │                            │  .abort()                  │
-   │                            │───────────────────────────►│
-   │                            │                            │
-   │                            │        AbortError thrown   │
-   │                            │◄───────────────────────────│
-   │                            │                            │
-   │   ai-stream-end            │  Save partial content      │
-   │◄───────────────────────────│  to database               │
-   │   {partial content}        │                            │
+┌──────────┐       ┌───────────┐       ┌──────────┐       ┌──────────┐
+│ Client   │       │ Socket.IO │       │ AI       │       │ Gemini   │
+│          │       │ Server    │       │ Service  │       │ API      │
+└────┬─────┘       └─────┬─────┘       └────┬─────┘       └────┬─────┘
+     │  SEND_MESSAGE      │                  │                   │
+     │  (AI_CHAT or @ai)  │                  │                   │
+     │───────────────────►│                  │                   │
+     │                    │  streamAIResponse │                   │
+     │                    │─────────────────►│                   │
+     │                    │                  │ Build context      │
+     │                    │                  │ (trim to limits)   │
+     │                    │                  │                   │
+     │  AI_STREAM_START   │                  │  sendMessageStream │
+     │◄───────────────────│                  │──────────────────►│
+     │                    │                  │                   │
+     │  AI_STREAM_CHUNK   │  onChunk(text)   │  stream chunk     │
+     │◄───────────────────│◄─────────────────│◄──────────────────│
+     │  ...               │  ...             │  ...              │
+     │                    │                  │                   │
+     │  AI_STREAM_END     │  onComplete()    │  stream end       │
+     │◄───────────────────│◄─────────────────│◄──────────────────│
+     │                    │  Save to DB      │                   │
+```
+
+### 4. WebRTC Call Flow
+
+```
+┌──────────┐       ┌───────────┐       ┌──────────┐       ┌──────────┐
+│ Caller   │       │ Socket.IO │       │ Call     │       │ Callee   │
+│ Client   │       │ Server    │       │ Service  │       │ Client   │
+└────┬─────┘       └─────┬─────┘       └────┬─────┘       └────┬─────┘
+     │  CALL_INITIATE     │                  │                   │
+     │───────────────────►│  initiateCall()  │                   │
+     │                    │─────────────────►│                   │
+     │                    │                  │ Create Call record │
+     │                    │                  │ (status: RINGING)  │
+     │                    │  CALL_RINGING    │                   │
+     │                    │────────────────────────────────────►│
+     │                    │                  │                   │
+     │                    │  CALL_ACCEPT     │                   │
+     │                    │◄───────────────────────────────────│
+     │                    │  acceptCall()     │                   │
+     │                    │─────────────────►│ status: ACTIVE    │
+     │  CALL_ACCEPTED     │                  │                   │
+     │◄───────────────────│                  │                   │
+     │                    │                  │                   │
+     │  CALL_OFFER (SDP)  │      relay       │                   │
+     │───────────────────►│────────────────────────────────────►│
+     │                    │  CALL_ANSWER     │                   │
+     │◄───────────────────│◄───────────────────────────────────│
+     │  ICE_CANDIDATE     │      relay       │  ICE_CANDIDATE   │
+     │◄──────────────────►│◄────────────────────────────────►│
+     │                    │                  │                   │
+     │  ═══ P2P Media Stream Established ═══                    │
+     │◄════════════════════════════════════════════════════════►│
+```
+
+### 5. File Upload Flow
+
+```
+┌──────────┐       ┌───────────┐       ┌──────────┐
+│ Client   │       │ Express   │       │ Upload   │
+│          │       │ + Multer  │       │ Service  │
+└────┬─────┘       └─────┬─────┘       └────┬─────┘
+     │  POST /api/upload  │                  │
+     │  (FormData + XHR)  │                  │
+     │───────────────────►│  processUpload() │
+     │                    │─────────────────►│
+     │                    │                  │ Save file (UUID name)
+     │                    │                  │ Generate thumbnail
+     │                    │                  │ (Sharp 200x200)
+     │  { fileUrl,        │                  │
+     │    thumbnailUrl }  │                  │
+     │◄───────────────────│◄─────────────────│
+     │                    │                  │
+     │  Then: SEND_MESSAGE with attachments  │
+     │  via Socket.IO                        │
+```
+
+### 6. Read Receipts Flow
+
+```
+┌──────────┐       ┌───────────┐       ┌──────────┐       ┌──────────┐
+│ Reader   │       │ Socket.IO │       │ Chat     │       │ Sender   │
+│ Client   │       │ Server    │       │ Service  │       │ Client   │
+└────┬─────┘       └─────┬─────┘       └────┬─────┘       └────┬─────┘
+     │  MESSAGE_READ      │                  │                   │
+     │  { messageIds }    │                  │                   │
+     │───────────────────►│  updateStatus()  │                   │
+     │                    │─────────────────►│                   │
+     │                    │                  │ Set status: READ   │
+     │                    │                  │                   │
+     │                    │  MSG_STATUS_UPDATE                   │
+     │                    │────────────────────────────────────►│
+     │                    │                  │   (blue checks)   │
 ```
 
 ---
 
 ## Database Schema
 
-### Entity-Relationship Diagram
+### Entity Relationship Diagram
 
 ```
-┌─────────────────────────────────┐
-│             User                │
-├─────────────────────────────────┤
-│ id          String  PK (UUID)   │
-│ email       String  UNIQUE      │
-│ name        String              │
-│ avatarUrl   String? (nullable)  │
-│ passwordHash String             │
-│ createdAt   DateTime            │
-│ updatedAt   DateTime            │
-├─────────────────────────────────┤
-│ INDEX: email                    │
-└───────────┬─────────────────────┘
-            │
-            │ 1:N (CASCADE delete)
-            │
-            ▼
-┌─────────────────────────────────┐
-│         Conversation            │
-├─────────────────────────────────┤
-│ id           String  PK (UUID)  │
-│ title        String  "New Chat" │
-│ userId       String  FK → User  │
-│ isPinned     Boolean  false     │
-│ systemPrompt String? (nullable) │
-│ createdAt    DateTime           │
-│ updatedAt    DateTime           │
-├─────────────────────────────────┤
-│ INDEX: userId                   │
-│ INDEX: updatedAt                │
-└───────────┬─────────────────────┘
-            │
-            │ 1:N (CASCADE delete)
-            │
-            ▼
-┌─────────────────────────────────┐
-│           Message               │
-├─────────────────────────────────┤
-│ id             String PK (UUID) │
-│ content        String           │
-│ role           MessageRole ENUM │
-│ conversationId String FK→Conv   │
-│ userId         String? FK→User  │
-│ isEdited       Boolean  false   │
-│ tokenCount     Int? (nullable)  │
-│ createdAt      DateTime         │
-├─────────────────────────────────┤
-│ INDEX: (conversationId,         │
-│         createdAt)              │
-└─────────────────────────────────┘
-
-  ┌───────────────────┐
-  │  MessageRole ENUM │
-  │  ─────────────    │
-  │  USER             │
-  │  ASSISTANT        │
-  └───────────────────┘
+┌─────────────────────┐       ┌─────────────────────────────┐
+│       User          │       │       Conversation           │
+├─────────────────────┤       ├─────────────────────────────┤
+│ id          UUID PK │       │ id          UUID PK          │
+│ email       unique  │◄──┐  │ type        ConversationType │
+│ name        String  │   │  │ title       String            │
+│ avatarUrl   String? │   │  │ groupName   String?           │
+│ passwordHash String │   │  │ description String?           │
+│ bio         String? │   │  │ systemPrompt String?          │
+│ status      String? │   │  │ createdBy   String            │
+│ isOnline    Boolean │   │  │ createdAt   DateTime          │
+│ lastSeenAt  DateTime?│  │  │ updatedAt   DateTime          │
+│ createdAt   DateTime│   │  └──────┬──────────────┬────────┘
+│ updatedAt   DateTime│   │         │              │
+└──┬──┬──┬──┬────────┘   │         │              │
+   │  │  │  │             │  ┌──────┴──────────────┴──┐
+   │  │  │  │             │  │  ConversationMember     │
+   │  │  │  │             │  ├────────────────────────┤
+   │  │  │  └────────────►│  │ conversationId  FK     │
+   │  │  │                │  │ userId          FK     │
+   │  │  │                   │ role    MemberRole     │
+   │  │  │                   │ isPinned   Boolean     │
+   │  │  │                   │ isMuted    Boolean     │
+   │  │  │                   │ joinedAt  DateTime     │
+   │  │  │                   └────────────────────────┘
+   │  │  │                   @@unique([conversationId, userId])
+   │  │  │
+   │  │  │  ┌────────────────────────────────┐
+   │  │  │  │         Message                │
+   │  │  │  ├────────────────────────────────┤
+   │  │  └─►│ id             UUID PK         │
+   │  │     │ content        String           │
+   │  │     │ type           MessageType      │
+   │  │     │ status         MessageStatus    │
+   │  │     │ conversationId FK               │
+   │  │     │ senderId       FK (nullable)    │
+   │  │     │ replyToId      FK (self-ref)    │
+   │  │     │ isEdited       Boolean          │
+   │  │     │ isDeleted      Boolean          │
+   │  │     │ tokenCount     Int?             │
+   │  │     │ createdAt      DateTime         │
+   │  │     └──┬─────────────┬───────────────┘
+   │  │        │             │
+   │  │  ┌─────┴────┐ ┌─────┴──────────┐
+   │  │  │Attachment │ │   Reaction     │
+   │  │  ├──────────┤ ├────────────────┤
+   │  │  │ id    PK │ │ id         PK  │
+   │  │  │ msgId FK │ │ messageId  FK  │
+   │  │  │ fileUrl  │ │ userId     FK  │
+   │  │  │ thumbUrl │ │ emoji     Str  │
+   │  │  │ fileName │ │ createdAt      │
+   │  │  │ fileSize │ └────────────────┘
+   │  │  │ mimeType │ @@unique([msgId, userId, emoji])
+   │  │  │ width?   │
+   │  │  │ height?  │
+   │  │  │ duration?│
+   │  │  └──────────┘
+   │  │
+   │  │  ┌───────────────────┐
+   │  │  │      Block        │
+   │  │  ├───────────────────┤
+   │  └─►│ id        UUID PK │
+   │     │ blockerId FK      │
+   │     │ blockedId FK      │
+   │     │ createdAt DateTime│
+   │     └───────────────────┘
+   │     @@unique([blockerId, blockedId])
+   │
+   │  ┌──────────────────────┐    ┌──────────────────────┐
+   │  │        Call          │    │     Notification      │
+   │  ├──────────────────────┤    ├──────────────────────┤
+   ├─►│ id         UUID PK  │ ┌─►│ id       UUID PK     │
+   │  │ convId     FK       │ │  │ userId   FK          │
+   │  │ callerId   FK       │ │  │ type  NotificationType│
+   │  │ calleeId   FK       │ │  │ title    String      │
+   │  │ type    CallType    │ │  │ body     String      │
+   │  │ status  CallStatus  │ │  │ data     Json?       │
+   │  │ startedAt DateTime? │ │  │ isRead   Boolean     │
+   │  │ endedAt   DateTime? │ │  │ createdAt DateTime   │
+   │  │ duration  Int?      │ │  └──────────────────────┘
+   │  │ createdAt DateTime  │ │  @@index([userId, isRead])
+   │  └──────────────────────┘ │
+   └───────────────────────────┘
 ```
+
+### Enums
+
+| Enum | Values |
+|------|--------|
+| `ConversationType` | `DIRECT`, `GROUP`, `AI_CHAT` |
+| `MemberRole` | `OWNER`, `ADMIN`, `MEMBER` |
+| `MessageType` | `TEXT`, `IMAGE`, `VIDEO`, `AUDIO`, `FILE`, `SYSTEM`, `AI_RESPONSE` |
+| `MessageStatus` | `SENT`, `DELIVERED`, `READ` |
+| `CallType` | `AUDIO`, `VIDEO` |
+| `CallStatus` | `RINGING`, `ACTIVE`, `ENDED`, `MISSED`, `REJECTED` |
+| `NotificationType` | `NEW_MESSAGE`, `MENTION`, `CALL_MISSED`, `GROUP_INVITE`, `AI_COMPLETE` |
 
 ### Cascade Behavior
 
-| Parent | Child | On Delete |
-|--------|-------|-----------|
-| User | Conversation | **CASCADE** — deleting a user deletes all their conversations |
-| User | Message | **SET NULL** — deleting a user sets `userId` to null on messages |
-| Conversation | Message | **CASCADE** — deleting a conversation deletes all its messages |
-
-### Key Design Decisions
-
-- **`passwordHash` is required** (not nullable) — only email/password auth is supported.
-- **`userId` on Message is nullable** — AI-generated messages have no associated user.
-- **`systemPrompt` on Conversation** — allows per-conversation AI persona customization.
-- **`isPinned` on Conversation** — pinned conversations sort to the top of the sidebar.
-- **`isEdited` on Message** — tracks if a user message was edited (shows "edited" indicator in UI).
-- **`tokenCount` on Message** — optional field for future token usage tracking.
-- **Composite index on `(conversationId, createdAt)`** — optimizes the most common query: fetching messages for a conversation in chronological order.
+| Relation | On Delete |
+|----------|-----------|
+| Conversation → Messages | CASCADE |
+| Conversation → Members | CASCADE |
+| Conversation → Calls | CASCADE |
+| Message → Attachments | CASCADE |
+| Message → Reactions | CASCADE |
+| Message → Sender (User) | SET NULL |
+| Message → ReplyTo (Message) | SET NULL |
+| User → Blocks | CASCADE |
+| User → Notifications | CASCADE |
+| User → Calls | CASCADE |
+| User → Reactions | CASCADE |
 
 ---
 
 ## Backend Architecture
 
-### Feature-Based Folder Structure
+### Feature-Based Structure
 
 ```
-src/
-├── config/       ← App-wide configuration (env, DB, Redis, AI)
-├── lib/          ← Shared utilities (errors, logging, async handling)
-├── middleware/   ← Express middleware pipeline
-├── features/     ← Domain-specific business logic
-│   ├── auth/     ← Authentication (signup, login, JWT, refresh)
-│   ├── chat/     ← Conversation & message CRUD
-│   └── ai/       ← Gemini AI integration
-├── socket/       ← Socket.IO event handlers
-├── app.ts        ← Express app factory
-└── index.ts      ← Server entry point
+src/features/
+├── auth/           # JWT authentication
+│   ├── jwt.service.ts      → Sign/verify tokens (access 15m, refresh 7d)
+│   ├── auth.service.ts     → Signup, login, refresh, logout, getProfile
+│   ├── auth.controller.ts  → HTTP handlers
+│   └── auth.router.ts      → Routes
+│
+├── chat/           # Conversations + messages + groups
+│   ├── chat.service.ts     → 3 conversation types, messages, groups,
+│   │                          reactions, soft-delete, export
+│   ├── chat.controller.ts  → HTTP handlers
+│   └── chat.router.ts      → Routes
+│
+├── ai/             # AI integration (optional)
+│   ├── context-manager.ts  → Build context, trim to 20 msgs / 30k chars
+│   ├── ai.service.ts       → Gemini streaming (null guard if no key)
+│   └── ai.controller.ts    → Summarize + smart replies (503 if no key)
+│
+├── user/           # Profiles + blocking + presence
+│   ├── user.service.ts     → Search, profile, blocking, Redis presence
+│   ├── user.controller.ts  → HTTP handlers
+│   └── user.router.ts      → Routes
+│
+├── upload/         # File upload
+│   ├── upload.service.ts   → Multer + Sharp thumbnails
+│   └── upload.controller.ts → Upload endpoint
+│
+├── call/           # Audio/video calls
+│   ├── call.service.ts     → Initiate, accept, reject, end, history
+│   ├── call.controller.ts  → HTTP handlers
+│   └── call.router.ts      → Routes
+│
+└── notification/   # Notifications
+    ├── notification.service.ts  → Create + broadcast, list, mark read
+    ├── notification.controller.ts → HTTP handlers
+    └── notification.router.ts     → Routes
 ```
 
-Each feature follows the **Service → Controller → Router** pattern:
+### Middleware Pipeline
 
 ```
-Router (route definitions + validation middleware)
-  └── Controller (HTTP request/response handling)
-        └── Service (business logic + database operations)
+Request → Helmet → CORS → JSON Parser → Cookie Parser → Rate Limiter
+       → [Auth Middleware] → [Validate Middleware] → Route Handler
+       → Error Middleware → Response
 ```
 
-### Express Middleware Pipeline
+| Middleware | Purpose |
+|-----------|---------|
+| `auth.middleware.ts` | Verify JWT, attach `req.user` = `{ userId, email }` |
+| `rate-limit.middleware.ts` | General: 60 req/min. AI: 20 req/min |
+| `validate.middleware.ts` | Zod schema validation factory |
+| `error.middleware.ts` | Catches ApiError + unhandled errors → JSON |
 
-Requests flow through middleware in this exact order:
-
-```
-Request
-  │
-  ▼
-┌──────────────────────┐
-│  helmet()            │  Security headers (X-Frame-Options, CSP, etc.)
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│  cors()              │  CORS with credentials, frontend origin whitelisted
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│  express.json()      │  Parse JSON body (1MB limit)
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│  cookieParser()      │  Parse cookies from request
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│  rateLimitMiddleware │  60 requests per minute per IP
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│  Routes              │
-│  ├── /health         │  Public health check
-│  ├── /api/auth/*     │  Public auth routes
-│  └── /api/convs/*    │  Protected (authMiddleware applied per-route)
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│  errorMiddleware     │  Catches ApiError and unhandled errors
-└──────────────────────┘
-```
-
-### JWT + Redis Token Strategy
+### Socket.IO Architecture
 
 ```
-                    ┌──────────────────────────┐
-                    │     Access Token          │
-                    │                          │
-                    │  Lifetime: 15 minutes    │
-                    │  Storage: Client memory  │
-                    │  + localStorage          │
-                    │  Payload: {userId, email}│
-                    │  Signed with: JWT_SECRET │
-                    └──────────────────────────┘
-
-                    ┌──────────────────────────┐
-                    │     Refresh Token         │
-                    │                          │
-                    │  Lifetime: 7 days        │
-                    │  Storage: Redis          │
-                    │  Key: refresh:{userId}   │
-                    │  TTL: 604800 seconds     │
-                    │  Signed with:            │
-                    │    JWT_REFRESH_SECRET    │
-                    └──────────────────────────┘
+socket.handler.ts
+├── JWT Auth Middleware (handshake)
+├── userSockets: Map<userId, Set<socketId>>
+├── On connect:
+│   ├── Join room: user:{userId}
+│   ├── Broadcast: USER_ONLINE
+│   └── Set online in DB + Redis
+├── On disconnect:
+│   ├── If last socket → USER_OFFLINE + set offline
+│   └── Remove socketId from tracking
+├── Register: chatSocketHandler
+└── Register: callSocketHandler
 ```
 
-**Token Rotation:** Every time a refresh token is used, a new pair (access + refresh) is issued, and the old refresh token is replaced in Redis. This means:
-- A stolen refresh token becomes invalid after first use
-- Logout immediately revokes the refresh token by deleting the Redis key
-- Only one refresh token is valid per user at any time
+### Config Layer
 
-### Socket.IO Room Architecture
-
-```
-                 ┌────────────────────────────┐
-                 │       Socket.IO Server      │
-                 │                            │
-                 │  Auth Middleware:           │
-                 │  Verify JWT from           │
-                 │  handshake.auth.token      │
-                 │                            │
-                 │  ┌──────────────────────┐  │
-                 │  │  Room: conversation: │  │
-                 │  │  abc-123             │  │
-                 │  │  ┌────────────────┐  │  │
-                 │  │  │ User Socket A  │  │  │
-                 │  │  └────────────────┘  │  │
-                 │  └──────────────────────┘  │
-                 │                            │
-                 │  ┌──────────────────────┐  │
-                 │  │  Room: conversation: │  │
-                 │  │  def-456             │  │
-                 │  │  ┌────────────────┐  │  │
-                 │  │  │ User Socket B  │  │  │
-                 │  │  └────────────────┘  │  │
-                 │  └──────────────────────┘  │
-                 └────────────────────────────┘
-```
-
-- Each conversation is a Socket.IO **room** named `conversation:{id}`
-- When a user opens a conversation, their socket joins that room
-- Messages and stream events are emitted to the room, ensuring only users viewing that conversation receive updates
-- `activeGenerations` Map tracks in-flight AI generations per conversation for abort support
-
-### Context Trimming Algorithm
-
-The context manager ensures Gemini API calls stay within token limits:
-
-```
-Input: All messages in conversation + current user message
-Output: Trimmed context array for Gemini's startChat() history
-
-Algorithm:
-1. Take the most recent MAX_CONTEXT_MESSAGES (20) messages
-2. Initialize totalChars = 0
-3. Iterate BACKWARDS through the 20 messages:
-   a. Add message character count to totalChars
-   b. If totalChars > MAX_CONTEXT_CHARS (30,000):
-      - Stop adding older messages
-      - Slice array to keep only recent ones
-4. Return trimmed messages in chronological order
-
-Result: The most recent messages that fit within both the
-        20-message count limit and 30,000-character limit
-```
-
-### Rate Limiting
-
-| Limiter | Requests | Window | Applied To |
-|---------|----------|--------|-----------|
-| General | 60 | 60 seconds | All routes |
-| AI | 20 | 60 seconds | AI-specific endpoints |
-
-Both use `express-rate-limit` with `standardHeaders: true` and `legacyHeaders: false`.
+| File | Purpose |
+|------|---------|
+| `env.ts` | Zod-validated env. GEMINI_API_KEY defaults to `""` |
+| `database.ts` | Prisma client singleton |
+| `redis.ts` | ioredis client |
+| `gemini.ts` | Nullable Gemini model. Validates `AIzaSy` prefix |
+| `socket-io.ts` | Socket.IO singleton (setIO/getIO) |
 
 ---
 
 ## Frontend Architecture
 
-### Next.js App Router Route Groups
-
-```
-app/
-├── layout.tsx              ← Root: Inter font, ThemeProvider, AuthProvider, Toaster
-├── page.tsx                ← Home: redirects to /chat or /login
-│
-├── (auth)/                 ← Unauthenticated routes
-│   ├── layout.tsx          ← Gradient background with animated blur circles
-│   ├── login/page.tsx      ← LoginForm component
-│   └── signup/page.tsx     ← SignupForm component
-│
-└── (main)/                 ← Authenticated routes
-    ├── layout.tsx          ← AuthGuard + SocketProvider + Sidebar + Header
-    ├── chat/page.tsx       ← Empty state (new conversation view)
-    └── chat/
-        └── [conversationId]/
-            └── page.tsx    ← Full chat view with messages + input
-```
-
-**Route groups** `(auth)` and `(main)` provide different layouts without affecting the URL structure:
-- `/login` uses the gradient background layout
-- `/chat` uses the sidebar + header layout with auth protection
-
 ### Provider Hierarchy
 
 ```
-<html>
-  <body>
-    <ThemeProvider defaultTheme="dark" attribute="class">
-      <TooltipProvider>
-        <AuthProvider>           ← Validates tokens on mount
-          {children}             ← Pages render here
-          <Toaster />
-        </AuthProvider>
-      </TooltipProvider>
-    </ThemeProvider>
-  </body>
-</html>
+Root Layout (app/layout.tsx):
+  ThemeProvider (dark default, class-based)
+    TooltipProvider
+      AuthProvider (token validation + API client config)
+        Toaster (react-hot-toast)
 
-For (main) routes, additional wrapping:
-<AuthGuard>                      ← Redirects to /login if not authenticated
-  <SocketProvider>               ← Manages Socket.IO lifecycle
-    <div className="flex h-screen">
-      <Sidebar />
-      <main>
-        <AppHeader />
-        {children}               ← Chat pages render here
-      </main>
-    </div>
-    <KeyboardShortcutsDialog />
-  </SocketProvider>
-</AuthGuard>
+Main Layout (app/(main)/layout.tsx):
+  AuthGuard
+    SocketProvider
+      CallProvider (IncomingCallDialog + CallView)
+        ┌──────────────────────────────────────┐
+        │  Sidebar │ AppHeader                 │
+        │          │ {children}                │
+        │          │ SettingsDialog             │
+        │          │ KeyboardShortcutsDialog    │
+        └──────────────────────────────────────┘
+        usePresence()  ← side-effect hook
 ```
 
-### Zustand Store Architecture
+### State Management (7 Zustand Stores)
 
-The application uses **4 Zustand stores**, each responsible for a specific domain:
+| Store | Key State | Persistence |
+|-------|-----------|-------------|
+| `auth-store` | user, tokens, isAuthenticated | localStorage |
+| `chat-store` | conversations[], activeConversationId, searchQuery | None |
+| `message-store` | messages (by convId), streamingMessage, isStreaming | None |
+| `ui-store` | isSidebarOpen, isSettingsOpen, isShortcutsOpen | None |
+| `call-store` | activeCall, callStatus, localStream, remoteStream | None |
+| `notification-store` | notifications[], unreadCount | None |
+| `user-store` | onlineUsers (Set), userProfiles (cache) | None |
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Zustand Stores                         │
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐ │
-│  │  auth-store   │  │  chat-store   │  │  message-store   │ │
-│  │              │  │              │  │                  │ │
-│  │  user        │  │  convos[]   │  │  messages{}      │ │
-│  │  tokens      │  │  activeId   │  │  (by convId)     │ │
-│  │  isAuth      │  │  isLoading  │  │  streamingMsg    │ │
-│  │  isLoading   │  │  searchQuery│  │  isStreaming      │ │
-│  │              │  │              │  │  loadingConvos   │ │
-│  │  Persisted   │  │  In-memory  │  │  In-memory       │ │
-│  │  (localStorage│  │  only       │  │  only            │ │
-│  │  )           │  │              │  │                  │ │
-│  └──────────────┘  └──────────────┘  └──────────────────┘ │
-│                                                             │
-│  ┌──────────────┐                                          │
-│  │  ui-store     │                                          │
-│  │              │                                          │
-│  │  sidebarOpen │                                          │
-│  │  sidebarCollapsed                                       │
-│  │  searchOpen  │                                          │
-│  │  shortcutsOpen                                          │
-│  │  settingsOpen│                                          │
-│  │              │                                          │
-│  │  In-memory   │                                          │
-│  │  only        │                                          │
-│  └──────────────┘                                          │
-└─────────────────────────────────────────────────────────────┘
-```
+### Hooks (13)
 
-**Key design decisions:**
-- Only `auth-store` persists to `localStorage` (tokens + user data survive page refresh)
-- `message-store` keys messages by `conversationId` (`Record<string, Message[]>`) for efficient per-conversation access
-- `message-store` tracks a `loadingConversations` Set to prevent duplicate fetches
-- `chat-store` auto-clears `activeConversationId` when the active conversation is deleted
+| Hook | Purpose | Socket Events |
+|------|---------|--------------|
+| `use-socket` | Socket context consumer | — |
+| `use-conversations` | Conversation CRUD | — |
+| `use-messages` | Messages + real-time | NEW_MESSAGE, UPDATED, DELETED, REACTION, STATUS |
+| `use-streaming` | AI stream + errors | AI_STREAM_* |
+| `use-call` | WebRTC management | CALL_* |
+| `use-typing` | Typing indicators | TYPING_* |
+| `use-presence` | Online tracking | USER_ONLINE/OFFLINE |
+| `use-notifications` | Notifications | NEW_NOTIFICATION |
+| `use-file-upload` | Upload + progress | — |
+| `use-message-status` | Read receipts | MESSAGE_READ |
+| `use-keyboard-shortcuts` | Key handlers | — |
+| `use-clipboard` | Copy feedback | — |
+| `use-media-query` | Responsive | — |
 
-### API Client Auto-Refresh Pattern
+### Component Architecture
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                    fetchWithAuth()                       │
-│                                                         │
-│  1. Get access token from auth store                    │
-│  2. Make request with Authorization: Bearer <token>     │
-│  3. If 200-299 → return response                       │
-│  4. If 401 (Unauthorized):                              │
-│     a. Get refresh token from auth store                │
-│     b. POST /api/auth/refresh { refreshToken }          │
-│     c. If success:                                      │
-│        - Store new tokens in auth store                 │
-│        - Retry original request with new access token   │
-│     d. If refresh fails:                                │
-│        - Call logout() (clear stores + localStorage)    │
-│        - Redirect to /login                             │
-│  5. If other error → throw with error message           │
-└────────────────────────────────────────────────────────┘
-```
-
-### Socket.IO Client Lifecycle
-
-```
-Auth Store Change (tokens available)
-         │
-         ▼
-SocketProvider useEffect detects accessToken
-         │
-         ▼
-connectSocket(accessToken)
-  │  - io(SOCKET_URL, { auth: { token } })
-  │  - transports: ['websocket', 'polling']
-  │  - reconnectionAttempts: 5
-  │  - reconnectionDelay: 1000
-  │  - reconnectionDelayMax: 5000
-  │
-  ├── on('connect')     → setIsConnected(true)
-  ├── on('disconnect')  → setIsConnected(false)
-  └── on('connect_error') → log error
-
-Auth Store Change (logout / tokens cleared)
-         │
-         ▼
-disconnectSocket()
-  - socket.disconnect()
-  - socket = null
-```
-
-### Component Composition Pattern
-
-Chat page composition (apps/frontend/src/app/(main)/chat/[conversationId]/page.tsx):
-
-```
-ChatConversationPage
-├── useMessages(conversationId)        ← Fetches messages + listens for new ones
-├── useStreaming(conversationId)        ← Handles AI stream events
-├── useSocket()                        ← Socket.IO connection
-│
-├── Effect: join-conversation room on mount
-├── Effect: leave-conversation room on unmount
-│
-└── Render:
-    ├── MessageList                     ← Scrollable message container
-    │   ├── Skeleton (loading)
-    │   ├── MessageBubble[] (messages)  ← Per-message with actions
-    │   │   ├── MarkdownRenderer       ← For AI messages
-    │   │   └── Hover Toolbar          ← Copy, regenerate, edit
-    │   ├── StreamingIndicator         ← While AI is generating
-    │   └── ScrollToBottom FAB         ← When scrolled up
-    │
-    └── MessageInput                    ← Auto-resize textarea
-        ├── Send Button (AnimatePresence toggle with Stop)
-        └── Character Count
+components/
+├── ui/          # ShadCN (10): button, input, avatar, dialog,
+│                  dropdown, scroll-area, skeleton, tooltip, separator, badge
+├── auth/        # Auth (3): auth-guard, login-form, signup-form
+├── chat/        # Chat (15): sidebar, conversation-item, message-list,
+│                  message-bubble, message-input, markdown-renderer,
+│                  streaming-indicator, empty-state, reply-preview,
+│                  file-upload-button, upload-progress, media-viewer,
+│                  reaction-picker, typing-indicator, message-status
+├── call/        # Call (4): call-view, incoming-call-dialog,
+│                  call-controls, call-timer
+└── layout/      # Layout (8): app-header, user-menu, theme-toggle,
+                   connection-status, keyboard-shortcuts, confirm-dialog,
+                   settings-dialog, notification-popover
 ```
 
 ---
 
 ## Shared Package
 
-### Type Flow Between Frontend and Backend
-
 ```
-packages/shared/src/types/message.ts
-  │
-  │  export interface Message {
-  │    id: string;
-  │    content: string;
-  │    role: MessageRole;
-  │    conversationId: string;
-  │    isEdited: boolean;
-  │    tokenCount: number | null;
-  │    createdAt: string;
-  │  }
-  │
-  ├──────────────────────► Backend: chat.service.ts
-  │                          Uses Message type for return values
-  │                          from database queries
-  │
-  └──────────────────────► Frontend: message-store.ts
-                             Uses Message type for store state
-                             and component props
-
-packages/shared/src/schemas/auth.schema.ts
-  │
-  │  export const signupSchema = z.object({
-  │    email: z.string().email(),
-  │    password: z.string().min(8),
-  │    name: z.string().min(2).max(50),
-  │  });
-  │
-  ├──────────────────────► Backend: auth.router.ts
-  │                          validate(signupSchema) middleware
-  │                          validates request body
-  │
-  └──────────────────────► Frontend: (available for client-side
-                             validation if needed)
-
-packages/shared/src/constants/socket-events.ts
-  │
-  │  export const SOCKET_EVENTS = {
-  │    SEND_MESSAGE: 'send-message',
-  │    AI_STREAM_CHUNK: 'ai-stream-chunk',
-  │    ...
-  │  };
-  │
-  ├──────────────────────► Backend: chat.socket.ts
-  │                          socket.on(SOCKET_EVENTS.SEND_MESSAGE, ...)
-  │                          socket.emit(SOCKET_EVENTS.AI_STREAM_CHUNK, ...)
-  │
-  └──────────────────────► Frontend: use-streaming.ts
-                             socket.on(SOCKET_EVENTS.AI_STREAM_CHUNK, ...)
+packages/shared/src/
+├── types/           # TypeScript interfaces
+│   ├── user.ts, message.ts, conversation.ts, auth.ts, call.ts, notification.ts
+│   └── socket-events.ts  → ServerToClientEvents, ClientToServerEvents
+├── schemas/         # Zod validation
+│   └── auth, message, conversation schemas
+└── constants/
+    └── socket-events.ts  → SOCKET_EVENTS (35+ event names)
 ```
 
 ---
 
 ## Security Architecture
 
-| Layer | Mechanism | Details |
-|-------|-----------|---------|
-| **Password Storage** | bcrypt | 12 salt rounds. Passwords are never stored in plain text |
-| **Access Tokens** | JWT | 15-minute expiry. Signed with `JWT_SECRET` (min 32 chars) |
-| **Refresh Tokens** | JWT + Redis | 7-day expiry. Stored in Redis for revocation. Rotated on each use |
-| **Token Revocation** | Redis delete | Logout deletes the refresh token from Redis immediately |
-| **HTTP Security** | Helmet | Sets security headers (X-Frame-Options, CSP, X-Content-Type-Options, etc.) |
-| **CORS** | Express CORS | Only `FRONTEND_URL` origin allowed. Credentials enabled |
-| **Rate Limiting** | express-rate-limit | 60 req/min general, 20 req/min AI endpoints |
-| **Input Validation** | Zod | All API inputs validated with Zod schemas before processing |
-| **SQL Injection** | Prisma ORM | Parameterized queries by default. No raw SQL |
-| **Resource Authorization** | Ownership checks | All conversation/message operations verify `userId` matches the authenticated user |
-| **Socket Auth** | JWT handshake | Socket.IO connections require valid JWT in `handshake.auth.token` |
-| **Environment** | Zod validation | All environment variables validated at startup. Server refuses to start with invalid config |
+### Rate Limiting
+
+| Tier | Limit | Window | Applied To |
+|------|-------|--------|------------|
+| General | 60 requests | 1 minute | All endpoints |
+| AI | 20 requests | 1 minute | AI endpoints |
+
+### File Upload Security
+
+| Check | Implementation |
+|-------|---------------|
+| MIME whitelist | Images, videos, audio, documents only |
+| Size limits | 10MB images, 50MB videos, 25MB audio/docs |
+| Filename sanitization | UUID-based names |
+| Storage isolation | `uploads/` via `express.static` |
+
+### Role-Based Access (Groups)
+
+| Action | OWNER | ADMIN | MEMBER |
+|--------|-------|-------|--------|
+| Update group settings | Yes | Yes | No |
+| Add member | Yes | Yes | No |
+| Remove member | Yes | Yes (not owner) | Self only |
+| Change role | Yes | No | No |
+| Delete conversation | Yes | No | No |
+
+### Gemini API Key Validation
+
+1. Check non-empty
+2. Check against KNOWN_PLACEHOLDERS
+3. Validate `AIzaSy` prefix
+4. If invalid → `geminiModel = null` → AI disabled
+5. AI endpoints return 503
 
 ---
 
 ## Design System
 
+### Color Tokens
+
+CSS custom properties with light/dark variants:
+
+| Token | Purpose |
+|-------|---------|
+| `--background` / `--foreground` | Page base |
+| `--primary` / `--primary-foreground` | Actions (violet) |
+| `--muted` / `--muted-foreground` | Subtle elements |
+| `--destructive` | Danger/error |
+| `--sidebar-*` | Sidebar-specific |
+
 ### Glassmorphism
 
-The UI uses frosted glass effects throughout:
-
-```css
-/* Light glass (sidebar, cards) */
-.glass {
-  background: hsl(var(--background) / 0.6);
-  backdrop-filter: blur(12px);
-  border: 1px solid hsl(var(--border) / 0.5);
-}
-
-/* Strong glass (dialogs, dropdowns) */
-.glass-strong {
-  background: hsl(var(--card) / 0.8);
-  backdrop-filter: blur(24px);
-  border: 1px solid hsl(var(--border) / 0.3);
-}
-```
+- `.glass` — `backdrop-blur-xl` + semi-transparent + subtle border
+- `.glass-strong` — stronger blur + more opaque
 
 ### Gradient System
 
-```
-Primary Gradient:  violet-600 → purple-600 → cyan-500
-Usage:             Buttons (variant="gradient"), AI logo, active indicators,
-                   user message bubbles, focus borders
+- **Primary**: `violet-500 → purple-500 → cyan-500`
+- **Text gradient**: `background-clip: text`
+- **Border gradient**: `conic-gradient` with mask via `::before`
+- **Glow**: `box-shadow` with violet hue
 
-Text Gradient:     violet-400 → purple-400 → cyan-400
-Usage:             .gradient-text class for headings and branding
+### Animations
 
-Border Gradient:   violet-500/50 → purple-500/50 → cyan-500/50
-Usage:             .gradient-border pseudo-element with mask technique
-```
-
-### Animation System (Framer Motion)
-
-| Animation | Where Used | Effect |
-|-----------|-----------|--------|
-| Fade + slide up | Message entrance | `initial={{ opacity: 0, y: 20 }}` |
-| Scale spring | Login logo, buttons | `initial={{ scale: 0.8 }}` with spring physics |
-| Width animation | Sidebar collapse | `animate={{ width: collapsed ? 64 : 300 }}` |
-| Layout animation | Active indicator | `layoutId="active-conversation"` for shared element transition |
-| AnimatePresence | Send/Stop button | Cross-fade between send arrow and stop square |
-| Staggered children | Prompt suggestions | Sequential entrance with increasing delay |
-| Rotate | Theme toggle | Sun/Moon icon rotation on theme change |
-
-### Color Tokens (CSS Variables)
-
-The theme uses CSS custom properties for light/dark mode switching:
-
-```
-Light Mode:                    Dark Mode:
---background: white            --background: near-black
---foreground: dark gray        --foreground: light gray
---card: white                  --card: dark gray
---primary: violet              --primary: violet
---muted: light gray            --muted: dark gray
---accent: light violet         --accent: dark violet
---destructive: red             --destructive: red
---border: light gray           --border: dark gray
---sidebar: light tint          --sidebar: dark tint
-```
-
-Theme switching is handled by `next-themes` with `attribute="class"`, toggling a `dark` class on `<html>` which activates Tailwind's dark mode variants.
+| Animation | Usage |
+|-----------|-------|
+| `shimmer` | Skeleton loading |
+| `pulse-dot` | Streaming indicator dots |
+| `gradient-shift` | Background gradient animation |
+| `sparkle` | AI avatar effect |
+| Framer `layout` | Conversation reordering |
+| Framer `AnimatePresence` | Message transitions |

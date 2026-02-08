@@ -6,7 +6,7 @@ let geminiModel: GenerativeModel | null = null;
 
 // Real Gemini API keys start with "AIzaSy" and are ~39 chars
 const KNOWN_PLACEHOLDERS = [
-  'your-gemini-api-key-here',,
+  'your-gemini-api-key-here',
 ];
 
 const isValidKey =

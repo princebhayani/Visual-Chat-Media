@@ -11,9 +11,12 @@
     "dev:frontend": "npm -w apps/frontend run dev",
     "dev:backend": "npm -w apps/backend run dev",
     "build": "npm -w packages/shared run build && npm -w apps/backend run build && npm -w apps/frontend run build",
+    "build:backend": "npm -w packages/shared run build && npm -w apps/backend run build",
     "db:migrate": "npm -w apps/backend run db:migrate",
     "db:push": "npm -w apps/backend run db:push",
+    "db:deploy": "npm -w apps/backend run db:push",
     "db:studio": "npm -w apps/backend run db:studio",
+    "render:build": "npm run build:backend && npm run db:deploy",
     "lint": "npm run lint --workspaces --if-present"
   },
   "devDependencies": {

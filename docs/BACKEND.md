@@ -1,6 +1,6 @@
 # Backend Documentation
 
-Complete reference for every file in the Express + Socket.IO backend application (`apps/backend/`).
+Complete reference for the Express + Socket.IO backend application (`apps/backend/`).
 
 ---
 
@@ -16,6 +16,10 @@ Complete reference for every file in the Express + Socket.IO backend application
 - [Feature: Auth](#feature-auth)
 - [Feature: Chat](#feature-chat)
 - [Feature: AI](#feature-ai)
+- [Feature: User](#feature-user)
+- [Feature: Upload](#feature-upload)
+- [Feature: Call](#feature-call)
+- [Feature: Notification](#feature-notification)
 - [Socket.IO](#socketio)
 - [App Entry Points](#app-entry-points)
 - [REST API Reference](#rest-api-reference)
@@ -25,9 +29,9 @@ Complete reference for every file in the Express + Socket.IO backend application
 
 ## Overview
 
-The backend is a **Node.js** server built with **Express** for REST APIs and **Socket.IO** for real-time WebSocket communication. It connects to **PostgreSQL** (via Prisma ORM), **Redis** (via ioredis), and **Google Gemini** (via `@google/generative-ai`) for AI-powered streaming responses.
+The backend is a **Node.js** server built with **Express** for REST APIs and **Socket.IO** for real-time WebSocket communication. It connects to **PostgreSQL** (via Prisma ORM), **Redis** (via ioredis), and optionally **Google Gemini** (via `@google/generative-ai`) for AI-powered streaming responses.
 
-The codebase follows a **feature-based folder structure** with the **Service → Controller → Router** pattern. All business logic lives in services, HTTP concerns in controllers, and route definitions in routers.
+The codebase follows a **feature-based folder structure** with the **Service → Controller → Router** pattern. All business logic lives in services, HTTP concerns in controllers, and route definitions in routers. Real-time events are handled by socket handlers.
 
 ---
 
@@ -45,6 +49,8 @@ The codebase follows a **feature-based folder structure** with the **Service →
 | **Validation** | Zod | ^3.23.8 |
 | **Security** | Helmet | ^8.0.0 |
 | **Rate Limiting** | express-rate-limit | ^7.4.1 |
+| **File Upload** | Multer | ^1.4.5 |
+| **Image Processing** | Sharp | ^0.33.x |
 | **Environment** | dotenv | ^16.4.7 |
 | **Dev Server** | tsx | ^4.19.2 |
 
@@ -57,7 +63,8 @@ apps/backend/
 ├── package.json                # Dependencies and scripts
 ├── tsconfig.json               # TypeScript config (CommonJS output)
 ├── prisma/
-│   └── schema.prisma           # Database models + relations
+│   └── schema.prisma           # 9 models, 7 enums
+├── uploads/                    # User uploaded files (gitignored)
 │
 └── src/
     ├── index.ts                # Server entry: HTTP + Socket.IO + Redis
@@ -67,963 +74,780 @@ apps/backend/
     │   ├── env.ts              # Zod-validated environment variables
     │   ├── database.ts         # Prisma client singleton
     │   ├── redis.ts            # ioredis client + connection
-    │   └── gemini.ts           # Gemini AI model + system prompt
+    │   └── gemini.ts           # Gemini AI model (nullable) + system prompt
     │
     ├── lib/
     │   ├── api-error.ts        # Custom ApiError class
     │   ├── async-handler.ts    # Async route error wrapper
-    │   └── logger.ts           # Structured console logger
+    │   ├── logger.ts           # Structured console logger
+    │   └── socket-io.ts        # Socket.IO singleton (setIO/getIO)
     │
     ├── middleware/
     │   ├── auth.middleware.ts   # JWT verification + AuthRequest
     │   ├── rate-limit.middleware.ts  # Rate limiting (general + AI)
     │   ├── error.middleware.ts  # Global error handler
-    │   └── validate.middleware.ts   # Zod schema validation
+    │   └── validate.middleware.ts   # Zod validation factory
     │
     ├── features/
     │   ├── auth/
-    │   │   ├── jwt.service.ts      # Sign/verify JWT tokens
+    │   │   ├── jwt.service.ts      # Sign/verify JWTs
     │   │   ├── auth.service.ts     # Signup, login, refresh, logout
-    │   │   ├── auth.controller.ts  # HTTP request handlers
-    │   │   └── auth.router.ts      # Route definitions
-    │   │
+    │   │   ├── auth.controller.ts  # HTTP handlers
+    │   │   └── auth.router.ts      # Auth routes
     │   ├── chat/
-    │   │   ├── chat.service.ts     # Conversation + message CRUD
-    │   │   ├── chat.controller.ts  # HTTP request handlers
-    │   │   └── chat.router.ts      # Route definitions
-    │   │
-    │   └── ai/
-    │       ├── context-manager.ts  # Context trimming algorithm
-    │       └── ai.service.ts       # Gemini streaming integration
+    │   │   ├── chat.service.ts     # Conversations + messages + groups
+    │   │   ├── chat.controller.ts  # HTTP handlers
+    │   │   └── chat.router.ts      # Chat routes
+    │   ├── ai/
+    │   │   ├── context-manager.ts  # Context trimming algorithm
+    │   │   ├── ai.service.ts       # Gemini streaming (with null guard)
+    │   │   └── ai.controller.ts    # Summarize + smart replies
+    │   ├── user/
+    │   │   ├── user.service.ts     # Search, profile, blocking, presence
+    │   │   ├── user.controller.ts  # HTTP handlers
+    │   │   └── user.router.ts      # User routes
+    │   ├── upload/
+    │   │   ├── upload.service.ts   # Multer + Sharp processing
+    │   │   └── upload.controller.ts # Upload endpoint
+    │   ├── call/
+    │   │   ├── call.service.ts     # Call initiate/accept/reject/end/history
+    │   │   ├── call.controller.ts  # HTTP handlers
+    │   │   └── call.router.ts      # Call routes
+    │   └── notification/
+    │       ├── notification.service.ts  # Create, list, unread count, mark read
+    │       ├── notification.controller.ts # HTTP handlers
+    │       └── notification.router.ts    # Notification routes
     │
     └── socket/
-        ├── socket.handler.ts   # Socket.IO auth + setup
-        └── chat.socket.ts      # Real-time chat event handlers
+        ├── socket.handler.ts   # Socket.IO auth + user rooms + presence
+        ├── chat.socket.ts      # Chat event handlers + @AI detection
+        └── call.socket.ts      # WebRTC signaling relay
 ```
 
 ---
 
 ## Configuration
 
-### `src/config/env.ts`
+### `env.ts` — Environment Variables
 
-**Purpose:** Validates all environment variables at startup using Zod. The server will not start if any required variable is missing or invalid.
+Zod-validated environment schema. Throws on startup if required values are missing:
 
-**Exports:**
-- `env` — Validated environment object
-- `Env` — TypeScript type (inferred from Zod schema)
+| Variable | Type | Default | Required |
+|----------|------|---------|----------|
+| `PORT` | number | `4000` | No |
+| `DATABASE_URL` | string | — | Yes |
+| `REDIS_URL` | string | `redis://localhost:6379` | No |
+| `JWT_SECRET` | string (min 32) | — | Yes |
+| `JWT_REFRESH_SECRET` | string (min 32) | — | Yes |
+| `GEMINI_API_KEY` | string | `""` | No |
+| `GEMINI_MODEL` | string | `gemini-2.0-flash` | No |
+| `FRONTEND_URL` | string | `http://localhost:3000` | No |
+| `NODE_ENV` | enum | `development` | No |
 
-**Validated Variables:**
+### `database.ts` — Prisma Client
 
-| Variable | Type | Default | Validation |
-|----------|------|---------|------------|
-| `PORT` | number | `4000` | Coerced from string |
-| `DATABASE_URL` | string | — | Required |
-| `REDIS_URL` | string | `redis://localhost:6379` | Optional |
-| `JWT_SECRET` | string | — | Required, min 32 chars |
-| `JWT_REFRESH_SECRET` | string | — | Required, min 32 chars |
-| `GEMINI_API_KEY` | string | — | Required |
-| `GEMINI_MODEL` | string | `gemini-2.0-flash` | Optional |
-| `FRONTEND_URL` | string | `http://localhost:3000` | Optional |
-| `NODE_ENV` | enum | `development` | `development`, `production`, `test` |
+Singleton Prisma client instance. Exported as `prisma` for use across all services.
 
-**Environment file loading:**
-1. Loads `.env` from project root (`../../../../.env` relative to the compiled output)
-2. Loads `.env.local` with `override: true` (for local overrides)
+### `redis.ts` — Redis Client
 
-### `src/config/database.ts`
+ioredis client with connection/error logging. Used for refresh token storage, rate limiting, and user presence tracking.
 
-**Purpose:** Creates a Prisma client singleton to prevent multiple database connections.
+### `gemini.ts` — Gemini AI Client
 
-**Exports:**
-- `prisma` — PrismaClient instance
+Exports `geminiModel` which can be **null** if AI is not configured:
 
-**Logic:**
-- Uses `globalThis` to store the Prisma instance across hot reloads in development
-- Logging configuration:
-  - Development: `warn` + `error` level logs
-  - Production: `error` level logs only
+- Checks `GEMINI_API_KEY` against a `KNOWN_PLACEHOLDERS` array
+- Validates key format: must start with `AIzaSy`
+- If invalid: logs warning, exports `null`
+- If valid: creates `GoogleGenerativeAI` instance and exports the model
+- Also exports `SYSTEM_PROMPT` constant for AI personality
 
-### `src/config/redis.ts`
+### `socket-io.ts` — Socket.IO Singleton
 
-**Purpose:** Creates and manages the Redis connection.
-
-**Exports:**
-- `redis` — ioredis client instance
-- `connectRedis()` — Async function to establish the connection
-
-**Configuration:**
-- `maxRetriesPerRequest: 3` — limits retry attempts per command
-- `lazyConnect: true` — defers connection until `connectRedis()` is called
-- Event listeners for `connect` (log success) and `error` (log error)
-
-### `src/config/gemini.ts`
-
-**Purpose:** Initializes the Google Generative AI client and defines the system prompt.
-
-**Exports:**
-- `geminiModel` — `GenerativeModel` instance configured with `env.GEMINI_MODEL`
-- `SYSTEM_PROMPT` — String constant defining the AI's behavior
-
-**System Prompt:**
-The AI is instructed to be a helpful, friendly assistant that:
-- Provides clear and concise answers
-- Uses markdown formatting for structured responses
-- Wraps code in language-tagged code blocks
-- Acknowledges when it doesn't know something
-- Is conversational yet informative
+Provides `setIO(server)` and `getIO()` for accessing the Socket.IO instance from services (e.g., notification service broadcasting to user rooms).
 
 ---
 
 ## Prisma Database Schema
 
-**File:** `prisma/schema.prisma`
+### Enums (7)
 
-### User Model
+| Enum | Values |
+|------|--------|
+| `ConversationType` | `DIRECT`, `GROUP`, `AI_CHAT` |
+| `MemberRole` | `OWNER`, `ADMIN`, `MEMBER` |
+| `MessageType` | `TEXT`, `IMAGE`, `VIDEO`, `AUDIO`, `FILE`, `SYSTEM`, `AI_RESPONSE` |
+| `MessageStatus` | `SENT`, `DELIVERED`, `READ` |
+| `CallType` | `AUDIO`, `VIDEO` |
+| `CallStatus` | `RINGING`, `ACTIVE`, `ENDED`, `MISSED`, `REJECTED` |
+| `NotificationType` | `NEW_MESSAGE`, `MENTION`, `CALL_MISSED`, `GROUP_INVITE`, `AI_COMPLETE` |
 
-| Field | Type | Constraints | Description |
-|-------|------|------------|-------------|
-| `id` | String | `@id @default(uuid())` | Primary key, auto-generated UUID |
-| `email` | String | `@unique` | User's email address, must be unique |
-| `name` | String | — | Display name |
-| `avatarUrl` | String? | nullable | Profile picture URL |
-| `passwordHash` | String | required | Bcrypt-hashed password (12 salt rounds) |
-| `createdAt` | DateTime | `@default(now())` | Account creation timestamp |
-| `updatedAt` | DateTime | `@updatedAt` | Last update timestamp |
+### Models (9)
 
-**Relations:**
-- `conversations` → `Conversation[]` (one-to-many)
-- `messages` → `Message[]` (one-to-many)
+#### User
 
-**Indexes:**
-- `@@index([email])` — fast email lookup for login
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID | PK, auto-generated |
+| `email` | String | Unique |
+| `name` | String | Display name |
+| `avatarUrl` | String? | Profile picture URL |
+| `passwordHash` | String | bcrypt hashed |
+| `bio` | String? | User biography |
+| `status` | String? | Custom status text |
+| `isOnline` | Boolean | Default: false |
+| `lastSeenAt` | DateTime? | Last activity timestamp |
 
-### Conversation Model
+**Relations:** memberships[], sentMessages[], blocks[], blockedBy[], callerCalls[], calleeCalls[], notifications[]
 
-| Field | Type | Constraints | Description |
-|-------|------|------------|-------------|
-| `id` | String | `@id @default(uuid())` | Primary key |
-| `title` | String | `@default("New Chat")` | Conversation title (auto-generated or user-set) |
-| `userId` | String | FK → User | Owner of the conversation |
-| `isPinned` | Boolean | `@default(false)` | Whether pinned to top of sidebar |
-| `systemPrompt` | String? | nullable | Custom AI persona/instructions for this conversation |
-| `createdAt` | DateTime | `@default(now())` | Creation timestamp |
-| `updatedAt` | DateTime | `@updatedAt` | Last activity timestamp |
+#### Conversation
 
-**Relations:**
-- `user` → `User` (many-to-one, `onDelete: Cascade`)
-- `messages` → `Message[]` (one-to-many)
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID | PK |
+| `type` | ConversationType | Default: AI_CHAT |
+| `title` | String | Default: "New Chat" |
+| `groupName` | String? | For GROUP type |
+| `description` | String? | Group description |
+| `systemPrompt` | String? | Custom AI system prompt |
+| `createdBy` | String | Creator's userId |
 
-**Indexes:**
-- `@@index([userId])` — fast user conversation listing
-- `@@index([updatedAt])` — ordering by recent activity
+**Relations:** members[], messages[], calls[]
+**Index:** updatedAt
 
-### Message Model
+#### ConversationMember
 
-| Field | Type | Constraints | Description |
-|-------|------|------------|-------------|
-| `id` | String | `@id @default(uuid())` | Primary key |
-| `content` | String | — | Message text content |
-| `role` | MessageRole | enum | `USER` or `ASSISTANT` |
-| `conversationId` | String | FK → Conversation | Parent conversation |
-| `userId` | String? | FK → User, nullable | Sender (null for AI messages) |
-| `isEdited` | Boolean | `@default(false)` | Whether the message was edited |
-| `tokenCount` | Int? | nullable | Token count for usage tracking |
-| `createdAt` | DateTime | `@default(now())` | Message timestamp |
+| Field | Type | Notes |
+|-------|------|-------|
+| `conversationId` | String | FK → Conversation (CASCADE) |
+| `userId` | String | FK → User |
+| `role` | MemberRole | Default: MEMBER |
+| `isPinned` | Boolean | Default: false |
+| `isMuted` | Boolean | Default: false |
+| `joinedAt` | DateTime | Auto-set |
 
-**Relations:**
-- `conversation` → `Conversation` (many-to-one, `onDelete: Cascade`)
-- `user` → `User?` (many-to-one, `onDelete: SetNull`)
+**Composite PK:** [conversationId, userId]
+**Unique:** [conversationId, userId]
 
-**Indexes:**
-- `@@index([conversationId, createdAt])` — fast message retrieval in chronological order
+#### Message
 
-### Enums
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID | PK |
+| `content` | String | Message text |
+| `type` | MessageType | Default: TEXT |
+| `status` | MessageStatus | Default: SENT |
+| `conversationId` | String | FK → Conversation (CASCADE) |
+| `senderId` | String? | FK → User (SET NULL) |
+| `replyToId` | String? | FK → Message self-ref (SET NULL) |
+| `isEdited` | Boolean | Default: false |
+| `isDeleted` | Boolean | Default: false |
+| `tokenCount` | Int? | AI token count |
 
-```
-MessageRole:
-  USER       — Message sent by a human user
-  ASSISTANT  — Message generated by the AI
-```
+**Relations:** attachments[], reactions[], replyTo?, replies[]
+**Index:** [conversationId, createdAt]
 
-### Cascade Behavior
+#### Attachment
 
-| Deletion | Effect |
-|----------|--------|
-| Delete a **User** | All their Conversations are deleted (CASCADE). Their Messages have `userId` set to null (SET NULL) |
-| Delete a **Conversation** | All its Messages are deleted (CASCADE) |
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID | PK |
+| `messageId` | String | FK → Message (CASCADE) |
+| `fileUrl` | String | Path to uploaded file |
+| `thumbnailUrl` | String? | Path to thumbnail |
+| `fileName` | String | Original filename |
+| `fileSize` | Int | Size in bytes |
+| `mimeType` | String | MIME type |
+| `width` | Int? | Image/video width |
+| `height` | Int? | Image/video height |
+| `duration` | Float? | Audio/video duration |
+
+#### Reaction
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID | PK |
+| `messageId` | String | FK → Message (CASCADE) |
+| `userId` | String | FK → User (CASCADE) |
+| `emoji` | String | Emoji character |
+
+**Unique:** [messageId, userId, emoji]
+
+#### Block
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID | PK |
+| `blockerId` | String | FK → User (CASCADE) |
+| `blockedId` | String | FK → User (CASCADE) |
+
+**Unique:** [blockerId, blockedId]
+
+#### Call
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID | PK |
+| `conversationId` | String | FK → Conversation (CASCADE) |
+| `callerId` | String | FK → User (CASCADE) |
+| `calleeId` | String | FK → User (CASCADE) |
+| `type` | CallType | AUDIO or VIDEO |
+| `status` | CallStatus | Default: RINGING |
+| `startedAt` | DateTime? | When call was accepted |
+| `endedAt` | DateTime? | When call ended |
+| `duration` | Int? | Duration in seconds |
+
+#### Notification
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `id` | UUID | PK |
+| `userId` | String | FK → User (CASCADE) |
+| `type` | NotificationType | Event type |
+| `title` | String | Display title |
+| `body` | String | Display body |
+| `data` | Json? | Additional metadata |
+| `isRead` | Boolean | Default: false |
+
+**Index:** [userId, isRead]
 
 ---
 
 ## Middleware
 
-### `src/middleware/auth.middleware.ts`
+### `auth.middleware.ts`
 
-**Purpose:** Protects routes by verifying JWT access tokens.
+- Extracts `Bearer` token from `Authorization` header
+- Verifies JWT signature and expiration using `JWT_SECRET`
+- Attaches decoded payload to `req.user` as `{ userId, email }`
+- Returns 401 if token is missing, expired, or invalid
+- Extends Express `Request` as `AuthRequest` with typed `user` property
 
-**Exports:**
-- `authMiddleware` — Express middleware function
-- `AuthRequest` — Interface extending `Request` with `userId` and `userEmail`
+### `rate-limit.middleware.ts`
 
-**Logic:**
-1. Extracts token from `Authorization: Bearer <token>` header
-2. If no token → throws `ApiError(401, 'Authentication required')`
-3. Calls `verifyAccessToken(token)` from JWT service
-4. If invalid → throws `ApiError(401, 'Invalid or expired token')`
-5. Attaches `userId` and `userEmail` to the request object
-6. Calls `next()` to proceed
+Two rate limiters exported:
 
-**Usage:** Applied to all `/api/conversations` routes and `POST /api/auth/logout`, `GET /api/auth/me`.
+| Limiter | Window | Max Requests | Applied To |
+|---------|--------|--------------|------------|
+| `generalLimiter` | 1 minute | 60 | All routes |
+| `aiLimiter` | 1 minute | 20 | AI endpoints only |
 
-### `src/middleware/rate-limit.middleware.ts`
+### `validate.middleware.ts`
 
-**Purpose:** Prevents abuse by limiting request frequency per IP.
+Factory function that accepts a Zod schema and returns Express middleware:
+- Validates `req.body` against the schema
+- On failure: returns 400 with field-level error details
+- On success: replaces `req.body` with parsed (sanitized) data
 
-**Exports:**
-- `rateLimitMiddleware` — General rate limiter (60 req/min)
-- `aiRateLimit` — Stricter limiter for AI endpoints (20 req/min)
+### `error.middleware.ts`
 
-**Configuration:**
-
-| Limiter | Max Requests | Window | Headers |
-|---------|-------------|--------|---------|
-| General | 60 | 60 seconds | `RateLimit-*` standard headers |
-| AI | 20 | 60 seconds | `RateLimit-*` standard headers |
-
-**Error response:** `{ message: "Too many requests, please try again later." }`
-
-### `src/middleware/error.middleware.ts`
-
-**Purpose:** Global error handler — catches all errors that propagate through the Express pipeline.
-
-**Exports:**
-- `errorMiddleware` — Express error handler (4 parameters)
-
-**Logic:**
-1. If error is `ApiError` instance:
-   - Returns `err.statusCode` with `{ message, errors }` body
-2. If error is unexpected:
-   - Logs full error to console via logger
-   - Returns `500` with `{ message: "Internal server error" }`
-
-### `src/middleware/validate.middleware.ts`
-
-**Purpose:** Factory function that creates validation middleware from Zod schemas.
-
-**Exports:**
-- `validate(schema)` — Returns Express middleware
-
-**Logic:**
-1. Takes a Zod schema as parameter
-2. Calls `schema.safeParse(req.body)` on incoming request
-3. If valid → replaces `req.body` with parsed data (strips unknown fields) → calls `next()`
-4. If invalid → extracts field-level errors from Zod issues → throws `ApiError(400)` with:
-   ```json
-   {
-     "message": "Validation failed",
-     "errors": {
-       "email": ["Invalid email format"],
-       "password": ["Must be at least 8 characters"]
-     }
-   }
-   ```
+Global error handler (4-arg Express middleware):
+- `ApiError` instances → returns `{ message, errors? }` with appropriate status code
+- Zod validation errors → returns 400 with formatted field errors
+- Unknown errors → returns 500 with generic message
+- Logs errors via structured logger
 
 ---
 
 ## Lib Utilities
 
-### `src/lib/api-error.ts`
+### `api-error.ts`
 
-**Purpose:** Custom error class for API error responses with HTTP status codes.
+Custom error class extending `Error`:
+- `statusCode: number` — HTTP status
+- `errors?: Record<string, string[]>` — field-level validation errors
+- `isOperational: boolean` — distinguishes expected from unexpected errors
 
-**Exports:**
-- `ApiError` class (extends `Error`)
+### `async-handler.ts`
 
-**Properties:**
-| Property | Type | Description |
-|----------|------|-------------|
-| `statusCode` | number | HTTP status code (400, 401, 404, 409, 500, etc.) |
-| `message` | string | Human-readable error message |
-| `errors` | `Record<string, string[]>?` | Optional field-level validation errors |
+Wraps async route handlers to catch rejected promises and forward to error middleware. Eliminates try/catch boilerplate in controllers.
 
-**Usage:** `throw new ApiError(404, 'Conversation not found')`
+### `logger.ts`
 
-### `src/lib/async-handler.ts`
+Structured console logger with methods:
+- `info(message, data?)` — blue prefix
+- `warn(message, data?)` — yellow prefix
+- `error(message, data?)` — red prefix
+- `debug(message, data?)` — gray prefix (dev only)
 
-**Purpose:** Wraps async Express route handlers to automatically catch promise rejections and forward them to the error middleware.
+Includes timestamp and optional JSON data payload.
 
-**Exports:**
-- `asyncHandler(fn)` — Takes an async function, returns a wrapped `RequestHandler`
+### `socket-io.ts`
 
-**Logic:**
-```
-Without:  async (req, res) => { ... }     ← Unhandled rejection if throws
-With:     asyncHandler(async (req, res) => { ... })  ← Error forwarded to next()
-```
-
-Eliminates the need for `try-catch` blocks in every route handler.
-
-### `src/lib/logger.ts`
-
-**Purpose:** Simple structured console logger with timestamps.
-
-**Exports:**
-- `logger` object with `info()`, `warn()`, `error()`, `debug()` methods
-
-**Format:** `[2024-01-15T10:30:00.000Z] INFO: Server started on port 4000`
-
-**Behavior:**
-| Method | Output | Condition |
-|--------|--------|-----------|
-| `info()` | `console.log` | Always |
-| `warn()` | `console.warn` | Always |
-| `error()` | `console.error` | Always |
-| `debug()` | `console.log` | Only in development (`NODE_ENV !== 'production'`) |
+Socket.IO singleton pattern:
+- `setIO(server)` — called once during server initialization
+- `getIO()` — returns the Socket.IO instance from anywhere in the app
+- Used by notification service to broadcast to user rooms without passing `io` around
 
 ---
 
 ## Feature: Auth
 
-### `src/features/auth/jwt.service.ts`
+### `jwt.service.ts`
 
-**Purpose:** Handles JWT token signing and verification.
+| Function | Description |
+|----------|-------------|
+| `generateAccessToken(payload)` | Signs JWT with `JWT_SECRET`, expires in 15 minutes |
+| `generateRefreshToken(payload)` | Signs JWT with `JWT_REFRESH_SECRET`, expires in 7 days |
+| `verifyAccessToken(token)` | Verifies and decodes access token |
+| `verifyRefreshToken(token)` | Verifies and decodes refresh token |
 
-**Exports:**
+Payload: `{ userId: string, email: string }`
 
-| Export | Description |
-|--------|-------------|
-| `TokenPayload` | Interface: `{ userId: string, email: string }` |
-| `signAccessToken(payload)` | Signs a JWT with `JWT_SECRET`, expires in `15m`. Returns token string |
-| `signRefreshToken(payload)` | Signs a JWT with `JWT_REFRESH_SECRET`, expires in `7d`. Returns token string |
-| `verifyAccessToken(token)` | Verifies and decodes access token. Returns `TokenPayload` or `null` on failure |
-| `verifyRefreshToken(token)` | Verifies and decodes refresh token. Returns `TokenPayload` or `null` on failure |
+### `auth.service.ts`
 
-**Security design:**
-- Access and refresh tokens use **different secrets** to prevent cross-use
-- Verify functions return `null` instead of throwing (safe pattern for middleware)
-- Short access token TTL (15min) limits the damage window of a stolen token
+| Function | Description |
+|----------|-------------|
+| `signup(name, email, password)` | Hash password (bcrypt, 12 rounds), create user, generate tokens, store refresh in Redis |
+| `login(email, password)` | Find user, verify password, generate tokens, store refresh in Redis |
+| `refreshTokens(refreshToken)` | Verify token, check exists in Redis, generate new pair, rotate in Redis |
+| `logout(userId)` | Delete refresh token from Redis |
+| `getProfile(userId)` | Return user without passwordHash |
 
-### `src/features/auth/auth.service.ts`
+### `auth.router.ts`
 
-**Purpose:** Core authentication business logic.
-
-**Exports:**
-
-#### `signup(data: SignupInput): Promise<{ user, tokens }>`
-
-1. Checks if email already exists → throws `ApiError(409, 'Email already registered')`
-2. Hashes password with `bcrypt.hash(password, 12)` (12 salt rounds)
-3. Creates user in database via Prisma
-4. Generates access + refresh token pair
-5. Stores refresh token in Redis (`refresh:{userId}`, TTL: 7 days)
-6. Returns `{ user: formatUser(user), tokens }`
-
-#### `login(data: LoginInput): Promise<{ user, tokens }>`
-
-1. Finds user by email → throws `ApiError(401, 'Invalid credentials')` if not found
-2. Compares password with stored hash via `bcrypt.compare()`
-3. If mismatch → throws `ApiError(401, 'Invalid credentials')`
-4. Generates tokens and stores refresh in Redis
-5. Returns `{ user, tokens }`
-
-#### `refreshTokens(refreshToken: string): Promise<{ user, tokens }>`
-
-1. Verifies the refresh token JWT → throws `ApiError(401)` if invalid
-2. Checks if token matches the one stored in Redis (`refresh:{userId}`)
-   - If mismatch → throws `ApiError(401, 'Refresh token revoked')` (token was rotated or revoked)
-3. Looks up user in database
-4. Generates new token pair and replaces refresh token in Redis
-5. Returns `{ user, tokens }`
-
-#### `logout(userId: string): Promise<void>`
-
-Deletes the refresh token from Redis (`redis.del('refresh:{userId}')`). This immediately invalidates the refresh token, preventing new access tokens from being issued.
-
-#### `getProfile(userId: string): Promise<UserPublic>`
-
-Fetches user from database by ID. Returns public fields only (id, email, name, avatarUrl).
-
-**Internal helpers:**
-- `generateTokens(userId, email)` — Creates both token types
-- `storeRefreshToken(userId, token)` — Stores in Redis with 7-day TTL
-- `formatUser(user)` — Strips sensitive fields (passwordHash)
-
-### `src/features/auth/auth.controller.ts`
-
-**Purpose:** HTTP request handlers for auth endpoints.
-
-**Exports:** All wrapped with `asyncHandler()` for automatic error catching.
-
-| Handler | HTTP | Logic |
-|---------|------|-------|
-| `signup` | POST | Calls `authService.signup(req.body)`, returns 201 |
-| `login` | POST | Calls `authService.login(req.body)`, returns 200 |
-| `refreshToken` | POST | Extracts `refreshToken` from body, calls `authService.refreshTokens()` |
-| `logout` | POST | Gets `userId` from `AuthRequest`, calls `authService.logout()` |
-| `getProfile` | GET | Gets `userId` from `AuthRequest`, calls `authService.getProfile()` |
-
-### `src/features/auth/auth.router.ts`
-
-**Purpose:** Defines auth route endpoints.
-
-**Routes:**
-
-| Method | Path | Middleware | Handler |
-|--------|------|-----------|---------|
-| POST | `/signup` | `validate(signupSchema)` | `authController.signup` |
-| POST | `/login` | `validate(loginSchema)` | `authController.login` |
-| POST | `/refresh` | none | `authController.refreshToken` |
-| POST | `/logout` | `authMiddleware` | `authController.logout` |
-| GET | `/me` | `authMiddleware` | `authController.getProfile` |
-
-**Mounted at:** `/api/auth` (configured in `app.ts`)
+| Method | Path | Auth | Validation |
+|--------|------|------|------------|
+| `POST` | `/api/auth/signup` | No | signupSchema |
+| `POST` | `/api/auth/login` | No | loginSchema |
+| `POST` | `/api/auth/refresh` | No | — |
+| `POST` | `/api/auth/logout` | Yes | — |
+| `GET` | `/api/auth/me` | Yes | — |
 
 ---
 
 ## Feature: Chat
 
-### `src/features/chat/chat.service.ts`
+### Conversation Types
 
-**Purpose:** All database operations for conversations and messages.
+| Type | Description | Members |
+|------|-------------|---------|
+| `AI_CHAT` | User chats with AI | 1 user (OWNER) |
+| `DIRECT` | 1:1 private messaging | 2 users |
+| `GROUP` | Multi-user group chat | 2+ users with roles |
 
-**Exports (10 functions):**
+### `chat.service.ts` — Conversation Functions
 
-#### `listConversations(userId, search?): Promise<Conversation[]>`
+| Function | Description |
+|----------|-------------|
+| `listConversations(userId, search?)` | List with unread counts, member info, sorted by pinned → updatedAt. Search filters by title/content (case-insensitive) |
+| `createConversation(userId, data)` | Create AI_CHAT (single member), DIRECT (with participantId, deduplication), or GROUP (with groupName, memberIds) |
+| `getConversation(id, userId)` | Get with membership check |
+| `updateConversation(id, userId, data)` | Update title/groupName/description/systemPrompt. Admin check for groups |
+| `deleteConversation(id, userId)` | Owner-only (or user's own AI_CHAT) |
+| `togglePin(conversationId, userId)` | Toggle per-user pinning on ConversationMember |
 
-- Queries all conversations belonging to the user
-- If `search` is provided: filters by title OR message content (case-insensitive `contains`)
-- **Sort order**: Pinned first (`isPinned: desc`), then by `updatedAt: desc`
-- Returns conversation metadata (no messages)
+### `chat.service.ts` — Message Functions
 
-#### `createConversation(userId, title?, systemPrompt?): Promise<Conversation>`
+| Function | Description |
+|----------|-------------|
+| `getMessages(conversationId, userId, cursor?, limit?)` | Cursor-based pagination (default 50). Includes attachments, reactions, replyTo, sender |
+| `saveMessage(data)` | Create message with optional attachments array, replyToId, type. Returns with relations |
+| `editMessage(messageId, userId, content)` | Ownership check, sets isEdited=true |
+| `softDeleteMessage(messageId, userId)` | Sets isDeleted=true, clears content |
+| `deleteLastAssistantMessage(conversationId)` | Deletes last AI_RESPONSE message for regeneration |
+| `toggleReaction(messageId, userId, emoji)` | Add if not exists, remove if exists. Unique per [messageId, userId, emoji] |
 
-- Creates a new conversation with default title "New Chat"
-- Optional custom title and system prompt
-- Returns the created conversation
+### `chat.service.ts` — Group Functions
 
-#### `getConversation(id, userId): Promise<ConversationWithMessages>`
+| Function | Description |
+|----------|-------------|
+| `addGroupMember(conversationId, userId, targetUserId)` | Admin-only. Creates SYSTEM message: "User joined the group" |
+| `removeGroupMember(conversationId, userId, targetUserId)` | Admin or self-leave. Creates SYSTEM message |
+| `updateMemberRole(conversationId, userId, targetUserId, role)` | Owner-only. Can promote to ADMIN or demote to MEMBER |
 
-- Fetches a single conversation by ID
-- **Ownership check**: Verifies `userId` matches → throws `ApiError(404)` if unauthorized
-- Returns conversation with metadata (no messages inline — messages are fetched separately)
+### `chat.service.ts` — Export
 
-#### `updateConversation(id, userId, data): Promise<Conversation>`
+| Function | Description |
+|----------|-------------|
+| `exportConversation(id, userId, format)` | Export as `json` (full data) or `markdown` (formatted text with timestamps) |
 
-- Updates conversation properties (title, isPinned, systemPrompt)
-- **Ownership check**: Verifies `userId` matches
-- Accepts partial data (only updates provided fields)
-- Returns updated conversation
+### `chat.router.ts`
 
-#### `deleteConversation(id, userId): Promise<void>`
-
-- Deletes a conversation and all its messages (CASCADE)
-- **Ownership check**: Verifies `userId` matches
-
-#### `getMessages(conversationId, userId, cursor?, limit?): Promise<Message[]>`
-
-- Fetches messages for a conversation with **cursor-based pagination**
-- **Default limit**: 50 messages
-- **Cursor**: If provided, fetches messages before the cursor message (older messages)
-- **Sort**: `createdAt: asc` (chronological order)
-- **Ownership check**: Verifies the conversation belongs to the user
-
-#### `saveMessage(conversationId, content, role, userId?, tokenCount?): Promise<Message>`
-
-- Creates a new message in the database
-- `userId` is optional (null for AI-generated messages)
-- `tokenCount` is optional (for future usage tracking)
-- Returns the saved message
-
-#### `deleteLastAssistantMessage(conversationId, userId): Promise<Message | null>`
-
-- Finds the most recent ASSISTANT message in the conversation
-- Deletes it from the database
-- Returns the deleted message (or null if none found)
-- Used by the **regenerate** feature to remove the old AI response before generating a new one
-
-#### `editMessage(messageId, userId, content): Promise<Message>`
-
-- Updates the content of a user message
-- Sets `isEdited: true` on the message
-- **Cascade delete**: Deletes ALL messages that were created AFTER the edited message
-  - This removes the old AI response and any subsequent messages
-  - The AI will regenerate from the edited message
-- Returns the updated message
-
-#### `exportConversation(id, userId, format?): Promise<string | object>`
-
-- Exports a conversation with all its messages
-- **Ownership check**: Verifies `userId` matches
-- **Formats supported:**
-  - `json` — Returns structured JSON object with conversation metadata and messages
-  - `markdown` (default) — Returns formatted markdown string:
-    ```markdown
-    # Conversation Title
-
-    **Created:** 2024-01-15
-    **Messages:** 24
-
-    ---
-
-    **User** (10:30 AM):
-    Hello, how are you?
-
-    **Assistant** (10:30 AM):
-    I'm doing well! How can I help you today?
-    ```
-
-### `src/features/chat/chat.controller.ts`
-
-**Purpose:** HTTP handlers with response formatting.
-
-**Response formatting logic:**
-- Converts `createdAt` / `updatedAt` timestamps to ISO strings (`.toISOString()`)
-- Converts message roles to lowercase (`USER` → `user`, `ASSISTANT` → `assistant`)
-- Structures consistent response objects
-
-**Exports:**
-
-| Handler | Logic |
-|---------|-------|
-| `listConversations` | Calls service with `req.query.search`, formats and returns array |
-| `createConversation` | Calls service with body data, returns 201 with formatted conversation |
-| `getConversation` | Calls service with `req.params.id`, formats and returns |
-| `updateConversation` | Calls service with `req.params.id` + body, formats and returns |
-| `deleteConversation` | Calls service with `req.params.id`, returns `{ message: "Deleted" }` |
-| `getMessages` | Calls service with cursor/limit from query, formats messages array |
-| `exportConversation` | Calls service with format from query. Sets content-type header for downloads |
-
-**Note:** `req.params.id` is cast as `string` due to Express 5 types returning `string | string[]`.
-
-### `src/features/chat/chat.router.ts`
-
-**Purpose:** Chat route definitions.
-
-**Routes:**
-
-| Method | Path | Middleware | Handler |
-|--------|------|-----------|---------|
-| GET | `/` | none | `chatController.listConversations` |
-| POST | `/` | `validate(createConversationSchema)` | `chatController.createConversation` |
-| GET | `/:id` | none | `chatController.getConversation` |
-| PATCH | `/:id` | `validate(updateConversationSchema)` | `chatController.updateConversation` |
-| DELETE | `/:id` | none | `chatController.deleteConversation` |
-| GET | `/:id/messages` | none | `chatController.getMessages` |
-| GET | `/:id/export` | none | `chatController.exportConversation` |
-
-**Mounted at:** `/api/conversations` with `authMiddleware` applied at the router level (configured in `app.ts`)
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/conversations` | List conversations |
+| `POST` | `/api/conversations` | Create conversation |
+| `GET` | `/api/conversations/:id` | Get single conversation |
+| `PATCH` | `/api/conversations/:id` | Update conversation |
+| `DELETE` | `/api/conversations/:id` | Delete conversation |
+| `GET` | `/api/conversations/:id/messages` | Get messages (cursor pagination) |
+| `GET` | `/api/conversations/:id/export` | Export conversation |
+| `POST` | `/api/conversations/:id/members` | Add group member |
+| `DELETE` | `/api/conversations/:id/members/:userId` | Remove group member |
+| `PATCH` | `/api/conversations/:id/members/:userId/role` | Change member role |
 
 ---
 
 ## Feature: AI
 
-### `src/features/ai/context-manager.ts`
+### `context-manager.ts`
 
-**Purpose:** Trims conversation history to fit within Gemini's context window limits.
+Builds conversation context for Gemini chat sessions:
+- Takes recent messages from the conversation
+- Trims to fit within limits: **20 messages** or **30,000 characters**
+- Formats as Gemini-compatible message history (user/model roles)
+- Supports custom system prompts per conversation
 
-**Exports:**
-- `buildContext(messages, currentMessage): ContextMessage[]`
+### `ai.service.ts`
 
-**Constants:**
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| `MAX_CONTEXT_MESSAGES` | 20 | Maximum number of historical messages to include |
-| `MAX_CONTEXT_CHARS` | 30,000 | Maximum total character count across all context messages |
+| Function | Description |
+|----------|-------------|
+| `streamAIResponse(conversationId, userMessage, callbacks, abortSignal?, systemPrompt?)` | Streams response from Gemini with token-by-token callbacks |
 
-**Algorithm:**
+**Null guard:** If `geminiModel` is null, immediately calls `onError` with a descriptive message.
 
-```
-Input: Full message history + current user message
+**Callbacks:**
+- `onChunk(text)` — emitted for each streamed token
+- `onComplete(fullContent)` — emitted when generation finishes
+- `onError(error)` — emitted on failure
 
-Step 1: Take the most recent 20 messages (slice from end)
+**Abort support:** Accepts an `AbortSignal` to cancel generation mid-stream.
 
-Step 2: Character budget check
-  - Initialize totalChars = 0
-  - Iterate BACKWARDS through the 20 messages:
-    - totalChars += message.content.length
-    - If totalChars > 30,000:
-      - Record the cutoff index
-      - Slice array from cutoff to end (keep only recent)
-      - Break loop
+### `ai.controller.ts`
 
-Step 3: Return trimmed messages in chronological order
-  - Each message formatted as: { role: 'user'|'model', parts: [{ text }] }
+| Function | Endpoint | Description |
+|----------|----------|-------------|
+| `summarizeConversation` | `POST /api/conversations/:id/summarize` | Fetches last 100 messages, asks Gemini to generate a summary |
+| `getSmartReplies` | `GET /api/conversations/:id/smart-replies` | Fetches last 5 messages, asks Gemini for 3 short reply suggestions |
 
-Result: Most recent messages that fit within both limits
-```
+Both endpoints check for `geminiModel` and throw `ApiError(503)` if AI is not configured.
 
-**Why backward iteration?** This ensures the most recent messages (which are most relevant to the current conversation context) are always preserved, while older messages are trimmed first.
+---
 
-### `src/features/ai/ai.service.ts`
+## Feature: User
 
-**Purpose:** Handles streaming AI responses from Google Gemini.
+### `user.service.ts`
 
-**Exports:**
-- `streamAIResponse(conversationId, userMessage, callbacks, abortSignal?, customSystemPrompt?): Promise<string>`
+| Function | Description |
+|----------|-------------|
+| `searchUsers(query, currentUserId)` | Search by name or email (case-insensitive). Excludes self and blocked users |
+| `getUserProfile(userId)` | Get user by ID (without passwordHash) |
+| `updateProfile(userId, data)` | Update name, bio, status, avatarUrl |
+| `setUserOnline(userId)` | Set `isOnline=true` in DB + create Redis presence key |
+| `setUserOffline(userId)` | Set `isOnline=false` + `lastSeenAt=now()` in DB + delete Redis key |
+| `isUserOnline(userId)` | Check Redis key for presence |
+| `blockUser(blockerId, blockedId)` | Create Block record |
+| `unblockUser(blockerId, blockedId)` | Delete Block record |
+| `getBlockedUsers(userId)` | List all users blocked by caller |
+| `isBlocked(userId1, userId2)` | Bidirectional check — returns true if either has blocked the other |
 
-**Parameters:**
+### `user.router.ts`
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `conversationId` | string | Conversation to generate for |
-| `userMessage` | string | The user's message text |
-| `callbacks` | object | `{ onChunk, onComplete, onError }` |
-| `abortSignal` | AbortSignal? | For cancellation support |
-| `customSystemPrompt` | string? | Override the default system prompt |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/users/search` | Search users (`?q=`) |
+| `GET` | `/api/users/:id` | Get user profile |
+| `PATCH` | `/api/users/profile` | Update own profile |
+| `POST` | `/api/users/block/:id` | Block user |
+| `DELETE` | `/api/users/block/:id` | Unblock user |
+| `GET` | `/api/users/blocked` | List blocked users |
 
-**Flow:**
+---
 
-1. **Fetch history**: Queries all messages for the conversation from the database
-2. **Build context**: Calls `buildContext()` to trim history to fit Gemini limits
-3. **Select system prompt**: Uses `customSystemPrompt` if provided, otherwise `SYSTEM_PROMPT` from config
-4. **Initialize Gemini chat**: Calls `geminiModel.startChat({ history: context })`
-5. **Stream response**: Calls `chat.sendMessageStream(userMessage)` which returns an async iterable
-6. **Emit chunks**: Iterates over the stream:
-   - For each chunk: calls `callbacks.onChunk(chunkText)` and appends to accumulator
-   - Checks `abortSignal.aborted` between chunks — throws `AbortError` if aborted
-7. **Complete**: Calls `callbacks.onComplete(fullContent)` with the accumulated text
-8. **Error handling**: Calls `callbacks.onError(error)` on any exception
-9. **Returns**: The full accumulated response string
+## Feature: Upload
 
-**AbortController integration:**
-- The calling code (socket handler) creates an `AbortController` per generation
-- The `AbortSignal` is checked between each chunk from Gemini
-- When `stop-generation` socket event is received, `controller.abort()` is called
-- The AI service catches the abort and stops streaming
+### `upload.service.ts`
+
+**Storage:** Multer disk storage in `uploads/` directory with UUID-based filenames.
+
+**Allowed MIME Types:**
+
+| Category | Types | Max Size |
+|----------|-------|----------|
+| Images | JPEG, PNG, GIF, WebP, SVG | 10 MB |
+| Videos | MP4, WebM, MOV | 50 MB |
+| Audio | MP3, WAV, OGG, WebM | 25 MB |
+| Documents | PDF, Word, Excel, TXT, CSV, ZIP | 25 MB |
+
+**Processing:**
+- Images get a **200x200 thumbnail** generated via Sharp
+- Metadata extraction: width/height for images, duration for audio/video
+- Returns: `{ fileUrl, thumbnailUrl?, fileName, fileSize, mimeType }`
+
+### Upload Endpoint
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/upload` | Upload file (multipart/form-data, field: `file`) |
+
+---
+
+## Feature: Call
+
+### `call.service.ts`
+
+| Function | Description |
+|----------|-------------|
+| `initiateCall(conversationId, callerId, calleeId, type)` | Create Call record (RINGING). Verifies both users are conversation members. Prevents concurrent calls in same conversation |
+| `acceptCall(callId, userId)` | Verify callee, set status=ACTIVE + startedAt |
+| `rejectCall(callId, userId)` | Verify callee, set status=REJECTED + endedAt |
+| `endCall(callId, userId)` | Set status=ENDED + endedAt, calculate duration in seconds |
+| `getCallHistory(userId, limit?)` | Paginated list of calls initiated or received by user |
+| `getCall(callId)` | Get single call record with caller/callee info |
+
+### `call.router.ts`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/calls` | Get call history |
+| `GET` | `/api/calls/:id` | Get single call |
+
+---
+
+## Feature: Notification
+
+### `notification.service.ts`
+
+| Function | Description |
+|----------|-------------|
+| `createNotification(userId, type, title, body, data?)` | Create in DB + broadcast `NEW_NOTIFICATION` to `user:{userId}` room via Socket.IO |
+| `getNotifications(userId, limit?, offset?)` | Paginated list with total count |
+| `getUnreadCount(userId)` | Count where `isRead=false` |
+| `markAsRead(notificationId, userId)` | Mark single notification as read |
+| `markAllAsRead(userId)` | Mark all user notifications as read |
+
+### `notification.router.ts`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/notifications` | Get notifications |
+| `GET` | `/api/notifications/unread-count` | Get unread count |
+| `PATCH` | `/api/notifications/:id/read` | Mark as read |
+| `PATCH` | `/api/notifications/read-all` | Mark all as read |
 
 ---
 
 ## Socket.IO
 
-### `src/socket/socket.handler.ts`
+### `socket.handler.ts` — Main Handler
 
-**Purpose:** Sets up Socket.IO server with JWT authentication middleware.
+**Authentication:**
+- JWT token extracted from `socket.handshake.auth.token`
+- Verified using `verifyAccessToken()`
+- Rejected connections get `connection_error` event
 
-**Exports:**
-- `AuthenticatedSocket` — Interface extending Socket with `userId: string`
-- `setupSocketIO(io)` — Configures authentication and event handling
+**Multi-Device Tracking:**
+- `userSockets: Map<string, Set<string>>` — maps userId to Set of socketIds
+- Allows multiple browser tabs/devices per user
 
-**Auth Middleware:**
-
+**Connection Lifecycle:**
 ```
-Socket connection attempt
-  │
-  ▼
-Extract token from socket.handshake.auth.token
-  │
-  ├── No token → next(new Error('Authentication required'))
-  │
-  ▼
-verifyAccessToken(token)
-  │
-  ├── Invalid → next(new Error('Invalid token'))
-  │
-  ▼
-Attach userId to socket object
-  │
-  ▼
-next() → Connection established
+On connect:
+  1. Verify JWT token
+  2. Add socketId to userSockets[userId]
+  3. Join room: user:{userId}
+  4. Join rooms for all user's conversations
+  5. Set user online (DB + Redis)
+  6. Broadcast USER_ONLINE to all connected users
+
+On disconnect:
+  1. Remove socketId from userSockets[userId]
+  2. If no more sockets for user:
+     a. Set user offline (DB + Redis + lastSeenAt)
+     b. Broadcast USER_OFFLINE to all connected users
 ```
 
-**Connection handler:**
-- Logs connection with userId
-- Calls `chatSocketHandler(io, socket)` for chat event registration
-- Logs disconnection on `disconnect` event
-- Logs errors on `error` event
+**Handler Registration:**
+- Calls `chatSocketHandler(socket, io, userId)` for chat events
+- Calls `callSocketHandler(socket, io, userId)` for call events
 
-### `src/socket/chat.socket.ts`
+### `chat.socket.ts` — Chat Events
 
-**Purpose:** Handles all real-time chat events. This is the core of the real-time system.
+**Client → Server Events:**
 
-**Exports:**
-- `chatSocketHandler(io, socket)` — Registers all event listeners on an authenticated socket
+| Event | Handler Logic |
+|-------|--------------|
+| `SEND_MESSAGE` | Save message to DB (with attachments, replyTo). Broadcast `NEW_MESSAGE` to conversation room. For AI_CHAT: auto-title on first message, then stream AI response. For non-AI: detect `@ai` mentions (case-insensitive) and trigger AI if found. Create notifications for offline members. Detect `@username` mentions for MENTION notifications. |
+| `EDIT_MESSAGE` | Edit message in DB. Broadcast `MESSAGE_UPDATED`. For AI_CHAT: delete subsequent AI messages and regenerate |
+| `DELETE_MESSAGE` | Soft-delete message. Broadcast `MESSAGE_DELETED` |
+| `MESSAGE_REACTION` | Toggle reaction. Broadcast `MESSAGE_REACTION_UPDATED` with full reactions list |
+| `MESSAGE_READ` | Update message status to READ. Broadcast `MESSAGE_STATUS_UPDATE` to sender |
+| `TYPING_START` | Broadcast `TYPING` to conversation room (excluding sender) |
+| `TYPING_STOP` | Broadcast `TYPING` to conversation room (excluding sender) |
+| `STOP_GENERATION` | Abort the active AI generation via AbortController |
+| `REGENERATE_RESPONSE` | Delete last AI message, then re-stream AI response |
 
-**State:**
-- `activeGenerations: Map<string, AbortController>` — Tracks in-flight AI generations by conversationId, enabling cancellation
+**AI Streaming Helper (`streamToClient`):**
+1. Creates `AbortController` stored per conversation
+2. Emits `AI_STREAM_START` to room
+3. On each chunk: emits `AI_STREAM_CHUNK`
+4. On complete: saves AI message to DB, emits `AI_STREAM_END` with saved message ID
+5. On error: emits `AI_STREAM_ERROR`
+6. Cleans up AbortController reference
 
-**Event Handlers:**
+### `call.socket.ts` — Call Events
 
-#### `JOIN_CONVERSATION`
-- **Payload:** `{ conversationId: string }`
-- **Action:** `socket.join('conversation:' + conversationId)`
-- Adds the socket to the conversation's room for targeted messaging
+**Client → Server Events:**
 
-#### `LEAVE_CONVERSATION`
-- **Payload:** `{ conversationId: string }`
-- **Action:** `socket.leave('conversation:' + conversationId)`
-- Removes the socket from the room
+| Event | Handler Logic |
+|-------|--------------|
+| `CALL_INITIATE` | Create call record via call.service. Emit `CALL_RINGING` to callee's `user:{calleeId}` room |
+| `CALL_ACCEPT` | Update call status to ACTIVE. Emit `CALL_ACCEPTED` to caller's `user:{callerId}` room |
+| `CALL_REJECT` | Update call status to REJECTED. Emit `CALL_REJECTED` to caller's room |
+| `CALL_END` | Update call status to ENDED (with duration). Emit `CALL_ENDED` to other participant's room |
+| `CALL_OFFER` | Relay SDP offer to other participant's room |
+| `CALL_ANSWER` | Relay SDP answer to other participant's room |
+| `CALL_ICE_CANDIDATE` | Relay ICE candidate to other participant's room |
 
-#### `SEND_MESSAGE`
-- **Payload:** `{ content: string, conversationId: string }`
-- **Flow:**
-  1. Save user message to database via `chatService.saveMessage()`
-  2. Broadcast `NEW_MESSAGE` event to the room
-  3. **Auto-title check**: If conversation title is "New Chat":
-     - Uses the first user message content (truncated to 50 chars) as the title
-     - Updates conversation in database
-     - Emits `CONVERSATION_UPDATED` event
-  4. Call `streamToClient()` to start AI generation
-
-#### `STOP_GENERATION`
-- **Payload:** `{ conversationId: string }`
-- **Action:** Looks up the `AbortController` in `activeGenerations` Map and calls `.abort()`
-- The AI service's stream loop detects the abort and stops
-
-#### `REGENERATE_RESPONSE`
-- **Payload:** `{ conversationId: string }`
-- **Flow:**
-  1. Delete the last assistant message via `chatService.deleteLastAssistantMessage()`
-  2. Emit `MESSAGE_DELETED` to the room
-  3. Find the last user message in the conversation
-  4. Call `streamToClient()` with the last user message content
-
-#### `EDIT_MESSAGE`
-- **Payload:** `{ messageId: string, content: string }`
-- **Flow:**
-  1. Edit the message via `chatService.editMessage()` (this also deletes all subsequent messages)
-  2. Emit `MESSAGE_UPDATED` to the room
-  3. Call `streamToClient()` with the edited content to regenerate the AI response
-
-#### `streamToClient(io, socket, conversationId, userMessage)` (internal helper)
-
-The core streaming function:
-
-1. Create `AbortController` and store in `activeGenerations` Map
-2. Emit `AI_STREAM_START` event with a temporary message ID
-3. Fetch conversation to check for custom `systemPrompt`
-4. Call `aiService.streamAIResponse()` with callbacks:
-   - **onChunk**: Emit `AI_STREAM_CHUNK` to the room
-   - **onComplete**:
-     - Save full AI message to database
-     - Emit `AI_STREAM_END` with final content and saved message ID
-     - Emit `NEW_MESSAGE` with the saved message
-   - **onError**: Emit `AI_STREAM_ERROR` with error message
-5. Clean up: Remove from `activeGenerations` Map when done
+**In-memory tracking:** Participant socketIds tracked per callId for targeted signaling relay.
 
 ---
 
 ## App Entry Points
 
-### `src/app.ts`
+### `app.ts` — Express App Factory
 
-**Purpose:** Express application factory. Creates and configures the Express app with all middleware and routes.
-
-**Exports:**
-- `createApp()` — Returns configured Express application
-
-**Middleware stack (in order):**
-
-| Order | Middleware | Purpose |
-|-------|-----------|---------|
-| 1 | `helmet()` | Security headers |
-| 2 | `cors({ origin: env.FRONTEND_URL, credentials: true })` | CORS with frontend origin |
-| 3 | `express.json({ limit: '1mb' })` | JSON body parser with 1MB limit |
-| 4 | `cookieParser()` | Cookie parsing |
-| 5 | `rateLimitMiddleware` | Global rate limiting (60 req/min) |
-
-**Routes:**
-
-| Path | Handler | Auth |
-|------|---------|------|
-| `GET /health` | Returns `{ status: 'ok' }` | No |
-| `/api/auth/*` | `authRouter` | Per-route |
-| `/api/conversations/*` | `chatRouter` with `authMiddleware` | Yes (all routes) |
-
-**Error handling:** `errorMiddleware` is registered last to catch all errors.
-
-### `src/index.ts`
-
-**Purpose:** Server entry point. Creates HTTP server, initializes Socket.IO, connects to Redis, and starts listening.
-
-**`main()` function flow:**
+Creates and configures the Express application:
 
 ```
-1. Connect to Redis
-   └── await connectRedis()
+Middleware stack:
+1. Helmet (security headers)
+2. CORS (configurable origin from FRONTEND_URL)
+3. Express JSON parser (1MB limit)
+4. Cookie parser
+5. General rate limiter (60 req/min)
+6. Static file serving: /uploads → express.static('uploads')
 
-2. Create Express app
-   └── const app = createApp()
+Registered routes:
+  GET  /health            → { status: "ok" }
+  USE  /api/auth          → authRouter
+  USE  /api/conversations → authMiddleware → chatRouter
+  USE  /api/users         → authMiddleware → userRouter
+  USE  /api/upload        → authMiddleware → uploadRouter
+  USE  /api/calls         → authMiddleware → callRouter
+  USE  /api/notifications → authMiddleware → notificationRouter
 
-3. Create HTTP server
-   └── const server = http.createServer(app)
-
-4. Initialize Socket.IO
-   └── const io = new Server(server, {
-         cors: { origin: env.FRONTEND_URL, credentials: true },
-         transports: ['websocket', 'polling']
-       })
-
-5. Set up Socket.IO handlers
-   └── setupSocketIO(io)
-
-6. Start listening
-   └── server.listen(env.PORT)
-   └── Log: "Server running on port {PORT}"
-   └── Log: "Frontend URL: {FRONTEND_URL}"
-   └── Log: "Gemini Model: {GEMINI_MODEL}"
+Error handler (last):
+  errorMiddleware
 ```
 
-**Error handling:** Catches fatal errors, logs them, and exits with code 1.
+### `index.ts` — Server Entry
+
+1. Creates HTTP server from Express app
+2. Initializes Socket.IO with CORS config
+3. Calls `setIO(io)` to make Socket.IO accessible globally
+4. Connects to Redis
+5. Registers socket handler (`setupSocketHandler`)
+6. Starts listening on `PORT`
 
 ---
 
 ## REST API Reference
 
-### Base URL: `http://localhost:4000`
+### Authentication
 
-### Authentication Endpoints
+| Method | Path | Auth | Body | Response |
+|--------|------|------|------|----------|
+| `POST` | `/api/auth/signup` | No | `{ name, email, password }` | `{ user, tokens }` |
+| `POST` | `/api/auth/login` | No | `{ email, password }` | `{ user, tokens }` |
+| `POST` | `/api/auth/refresh` | No | `{ refreshToken }` | `{ tokens }` |
+| `POST` | `/api/auth/logout` | Yes | — | `{ message }` |
+| `GET` | `/api/auth/me` | Yes | — | `{ user }` |
 
-| Method | Path | Auth | Request Body | Response |
+### Conversations
+
+| Method | Path | Auth | Body / Query | Response |
 |--------|------|------|-------------|----------|
-| `POST` | `/api/auth/signup` | No | `{ name: string, email: string, password: string }` | `201 { user: UserPublic, tokens: { accessToken, refreshToken } }` |
-| `POST` | `/api/auth/login` | No | `{ email: string, password: string }` | `200 { user: UserPublic, tokens: { accessToken, refreshToken } }` |
-| `POST` | `/api/auth/refresh` | No | `{ refreshToken: string }` | `200 { user: UserPublic, tokens: { accessToken, refreshToken } }` |
-| `POST` | `/api/auth/logout` | Yes | — | `200 { message: "Logged out successfully" }` |
-| `GET` | `/api/auth/me` | Yes | — | `200 { id, email, name, avatarUrl }` |
+| `GET` | `/api/conversations` | Yes | `?search=` | `Conversation[]` |
+| `POST` | `/api/conversations` | Yes | `{ type?, title?, participantId?, groupName?, memberIds?, systemPrompt? }` | `Conversation` |
+| `GET` | `/api/conversations/:id` | Yes | — | `Conversation` |
+| `PATCH` | `/api/conversations/:id` | Yes | `{ title?, isPinned?, systemPrompt?, groupName?, description? }` | `Conversation` |
+| `DELETE` | `/api/conversations/:id` | Yes | — | `{ message }` |
+| `GET` | `/api/conversations/:id/messages` | Yes | `?cursor=&limit=50` | `{ messages, nextCursor }` |
+| `GET` | `/api/conversations/:id/export` | Yes | `?format=json|markdown` | File download |
+| `POST` | `/api/conversations/:id/members` | Yes | `{ userId }` | `{ member }` |
+| `DELETE` | `/api/conversations/:id/members/:userId` | Yes | — | `{ message }` |
+| `PATCH` | `/api/conversations/:id/members/:userId/role` | Yes | `{ role }` | `{ member }` |
+| `POST` | `/api/conversations/:id/summarize` | Yes | — | `{ summary }` |
+| `GET` | `/api/conversations/:id/smart-replies` | Yes | — | `{ replies: string[] }` |
 
-### Conversation Endpoints
+### Users
 
-| Method | Path | Auth | Request / Query | Response |
-|--------|------|------|----------------|----------|
-| `GET` | `/api/conversations` | Yes | `?search=term` | `200 Conversation[]` (pinned first, then by updatedAt desc) |
-| `POST` | `/api/conversations` | Yes | `{ title?: string, systemPrompt?: string }` | `201 Conversation` |
-| `GET` | `/api/conversations/:id` | Yes | — | `200 Conversation` |
-| `PATCH` | `/api/conversations/:id` | Yes | `{ title?, isPinned?, systemPrompt? }` | `200 Conversation` |
-| `DELETE` | `/api/conversations/:id` | Yes | — | `200 { message: "Deleted" }` |
-| `GET` | `/api/conversations/:id/messages` | Yes | `?cursor=msgId&limit=50` | `200 Message[]` (chronological) |
-| `GET` | `/api/conversations/:id/export` | Yes | `?format=markdown\|json` | `200` markdown string or JSON object |
+| Method | Path | Auth | Body / Query | Response |
+|--------|------|------|-------------|----------|
+| `GET` | `/api/users/search` | Yes | `?q=` | `UserPublic[]` |
+| `GET` | `/api/users/:id` | Yes | — | `UserPublic` |
+| `PATCH` | `/api/users/profile` | Yes | `{ name?, bio?, status?, avatarUrl? }` | `UserPublic` |
+| `POST` | `/api/users/block/:id` | Yes | — | `{ message }` |
+| `DELETE` | `/api/users/block/:id` | Yes | — | `{ message }` |
+| `GET` | `/api/users/blocked` | Yes | — | `UserPublic[]` |
 
-### Error Responses
+### Upload
 
-| Status | Meaning | Example |
-|--------|---------|---------|
-| `400` | Validation error | `{ message: "Validation failed", errors: { email: ["Invalid email"] } }` |
-| `401` | Authentication error | `{ message: "Invalid or expired token" }` |
-| `404` | Not found / unauthorized | `{ message: "Conversation not found" }` |
-| `409` | Conflict | `{ message: "Email already registered" }` |
-| `429` | Rate limited | `{ message: "Too many requests, please try again later." }` |
-| `500` | Server error | `{ message: "Internal server error" }` |
+| Method | Path | Auth | Body | Response |
+|--------|------|------|------|----------|
+| `POST` | `/api/upload` | Yes | FormData (`file`) | `{ fileUrl, thumbnailUrl?, fileName, fileSize, mimeType }` |
 
-### Validation Rules
+### Calls
 
-**Signup:**
-| Field | Rules |
-|-------|-------|
-| `email` | Valid email format (Zod `.email()`) |
-| `password` | Minimum 8 characters |
-| `name` | 2-50 characters |
+| Method | Path | Auth | Response |
+|--------|------|------|----------|
+| `GET` | `/api/calls` | Yes | `Call[]` |
+| `GET` | `/api/calls/:id` | Yes | `Call` |
 
-**Login:**
-| Field | Rules |
-|-------|-------|
-| `email` | Valid email format |
-| `password` | Minimum 1 character |
+### Notifications
 
-**Create Conversation:**
-| Field | Rules |
-|-------|-------|
-| `title` | Optional, 1-200 characters |
-| `systemPrompt` | Optional, max 2000 characters |
-
-**Update Conversation:**
-| Field | Rules |
-|-------|-------|
-| `title` | Optional, 1-200 characters |
-| `isPinned` | Optional, boolean |
-| `systemPrompt` | Optional, max 2000 characters, nullable |
-
-**Send Message:**
-| Field | Rules |
-|-------|-------|
-| `content` | 1-10,000 characters |
-| `conversationId` | Valid UUID |
-
-**Edit Message:**
-| Field | Rules |
-|-------|-------|
-| `messageId` | Valid UUID |
-| `content` | 1-10,000 characters |
+| Method | Path | Auth | Response |
+|--------|------|------|----------|
+| `GET` | `/api/notifications` | Yes | `{ notifications, total }` |
+| `GET` | `/api/notifications/unread-count` | Yes | `{ count }` |
+| `PATCH` | `/api/notifications/:id/read` | Yes | `{ notification }` |
+| `PATCH` | `/api/notifications/read-all` | Yes | `{ message }` |
 
 ---
 
 ## Socket.IO Event Reference
 
-### Connection
-
-```javascript
-const socket = io('http://localhost:4000', {
-  auth: { token: 'jwt-access-token' },
-  transports: ['websocket', 'polling'],
-});
-```
-
-The server validates the JWT token during the handshake. Invalid tokens are rejected with an error event.
-
-### Client → Server Events
+### Client → Server (17 events)
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `join-conversation` | `{ conversationId: string }` | Join a conversation room to receive messages |
-| `leave-conversation` | `{ conversationId: string }` | Leave a conversation room |
-| `send-message` | `{ content: string, conversationId: string }` | Send a message. Triggers AI response generation |
-| `stop-generation` | `{ conversationId: string }` | Abort an in-progress AI generation |
-| `regenerate-response` | `{ conversationId: string }` | Delete last AI message and regenerate |
-| `edit-message` | `{ messageId: string, content: string }` | Edit a user message. Deletes subsequent messages and regenerates AI response |
-| `typing-start` | `{ conversationId: string }` | (Defined but not yet implemented) |
-| `typing-stop` | `{ conversationId: string }` | (Defined but not yet implemented) |
+| `JOIN_CONVERSATION` | `{ conversationId }` | Join conversation room |
+| `LEAVE_CONVERSATION` | `{ conversationId }` | Leave conversation room |
+| `SEND_MESSAGE` | `{ content, conversationId, replyToId?, type?, attachments? }` | Send message |
+| `EDIT_MESSAGE` | `{ messageId, content }` | Edit message |
+| `DELETE_MESSAGE` | `{ messageId, conversationId }` | Soft-delete message |
+| `MESSAGE_REACTION` | `{ messageId, emoji, conversationId }` | Toggle reaction |
+| `MESSAGE_READ` | `{ conversationId, messageIds }` | Mark as read |
+| `TYPING_START` | `{ conversationId }` | Start typing |
+| `TYPING_STOP` | `{ conversationId }` | Stop typing |
+| `STOP_GENERATION` | `{ conversationId }` | Abort AI |
+| `REGENERATE_RESPONSE` | `{ conversationId }` | Regenerate AI |
+| `CALL_INITIATE` | `{ conversationId, calleeId, type }` | Start call |
+| `CALL_ACCEPT` | `{ callId }` | Accept call |
+| `CALL_REJECT` | `{ callId }` | Reject call |
+| `CALL_END` | `{ callId }` | End call |
+| `CALL_OFFER` | `{ callId, offer }` | SDP offer |
+| `CALL_ANSWER` | `{ callId, answer }` | SDP answer |
+| `CALL_ICE_CANDIDATE` | `{ callId, candidate }` | ICE candidate |
 
-### Server → Client Events
+### Server → Client (24 events)
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `new-message` | `{ id, content, role, conversationId, userId?, isEdited, tokenCount?, createdAt }` | A new message was saved to the database (user or AI) |
-| `ai-stream-start` | `{ messageId: string, conversationId: string }` | AI generation has started. `messageId` is a temporary ID |
-| `ai-stream-chunk` | `{ chunk: string, conversationId: string }` | A piece of the AI response (token-by-token) |
-| `ai-stream-end` | `{ content: string, conversationId: string, savedMessageId: string }` | AI generation complete. `content` is the full response. `savedMessageId` is the database ID |
-| `ai-stream-error` | `{ error: string, conversationId: string }` | AI generation failed |
-| `message-deleted` | `{ messageId: string, conversationId: string }` | A message was removed (from regeneration or edit cascade) |
-| `message-updated` | `{ message: Message }` | A message was edited |
-| `conversation-updated` | `{ conversation: Conversation }` | Conversation metadata changed (title, pin) |
-| `error` | `{ message: string }` | General socket error |
-
-### Event Flow Examples
-
-**Normal message send:**
-```
-Client: send-message { content: "Hello", conversationId: "abc" }
-Server: new-message { ... user message saved ... }
-Server: ai-stream-start { messageId: "tmp-123", conversationId: "abc" }
-Server: ai-stream-chunk { chunk: "Hi", conversationId: "abc" }
-Server: ai-stream-chunk { chunk: " there", conversationId: "abc" }
-Server: ai-stream-chunk { chunk: "!", conversationId: "abc" }
-Server: ai-stream-end { content: "Hi there!", savedMessageId: "msg-456", conversationId: "abc" }
-Server: new-message { ... AI message saved ... }
-```
-
-**Stop generation:**
-```
-Client: send-message { content: "Write a long essay", conversationId: "abc" }
-Server: ai-stream-start { ... }
-Server: ai-stream-chunk { chunk: "Sure, " }
-Server: ai-stream-chunk { chunk: "here is " }
-Client: stop-generation { conversationId: "abc" }
-Server: ai-stream-end { content: "Sure, here is ", savedMessageId: "msg-789" }
-```
-
-**Regenerate:**
-```
-Client: regenerate-response { conversationId: "abc" }
-Server: message-deleted { messageId: "old-ai-msg" }
-Server: ai-stream-start { ... }
-Server: ai-stream-chunk { ... }
-Server: ai-stream-end { ... new AI response ... }
-```
-
-**Edit message:**
-```
-Client: edit-message { messageId: "msg-123", content: "Updated question" }
-Server: message-updated { ... edited message ... }
-Server: ai-stream-start { ... }
-Server: ai-stream-chunk { ... }
-Server: ai-stream-end { ... new AI response for edited message ... }
-```
+| `NEW_MESSAGE` | `{ message }` | New message saved |
+| `MESSAGE_UPDATED` | `{ message }` | Message edited |
+| `MESSAGE_DELETED` | `{ messageId, conversationId }` | Message deleted |
+| `MESSAGE_REACTION_UPDATED` | `{ messageId, reactions }` | Reactions changed |
+| `MESSAGE_STATUS_UPDATE` | `{ messageId, status }` | Status changed |
+| `TYPING` | `{ conversationId, userId, userName, isTyping }` | Typing indicator |
+| `AI_STREAM_START` | `{ messageId, conversationId }` | AI started |
+| `AI_STREAM_CHUNK` | `{ chunk, conversationId }` | AI token |
+| `AI_STREAM_END` | `{ content, conversationId, savedMessageId }` | AI finished |
+| `AI_STREAM_ERROR` | `{ error, conversationId }` | AI failed |
+| `CONVERSATION_UPDATED` | `{ conversation }` | Conversation changed |
+| `CALL_RINGING` | `{ call }` | Incoming call |
+| `CALL_ACCEPTED` | `{ callId }` | Call accepted |
+| `CALL_REJECTED` | `{ callId }` | Call rejected |
+| `CALL_ENDED` | `{ callId }` | Call ended |
+| `CALL_OFFER` | `{ callId, offer }` | SDP offer relay |
+| `CALL_ANSWER` | `{ callId, answer }` | SDP answer relay |
+| `CALL_ICE_CANDIDATE` | `{ callId, candidate }` | ICE relay |
+| `USER_ONLINE` | `{ userId }` | User came online |
+| `USER_OFFLINE` | `{ userId }` | User went offline |
+| `GROUP_MEMBER_ADDED` | `{ conversationId, userId }` | Member added |
+| `GROUP_MEMBER_REMOVED` | `{ conversationId, userId }` | Member removed |
+| `GROUP_UPDATED` | `{ conversation }` | Group settings changed |
+| `NEW_NOTIFICATION` | `{ notification }` | New notification |
+| `ERROR` | `{ message }` | Socket error |
