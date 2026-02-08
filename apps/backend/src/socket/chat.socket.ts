@@ -142,10 +142,11 @@ async function handleSendMessage(
         include: { user: { select: { name: true } } },
       });
 
-      const senderMember = members.find((m) => m.userId === socket.userId);
+      type MemberWithUser = { userId: string; user?: { name: string } | null };
+      const senderMember = members.find((m: MemberWithUser) => m.userId === socket.userId);
       const senderName = senderMember?.user?.name || 'Someone';
 
-      for (const m of members) {
+      for (const m of members as MemberWithUser[]) {
         if (m.userId === socket.userId) continue;
         const sockets = getUserSocketIds(m.userId);
         if (sockets.size === 0) {
@@ -166,8 +167,8 @@ async function handleSendMessage(
       let match;
       while ((match = mentionRegex.exec(content)) !== null) {
         const mentionedName = match[1];
-        const mentionedMember = members.find(
-          (m) => m.user?.name?.toLowerCase().includes(mentionedName.toLowerCase()) && m.userId !== socket.userId,
+        const mentionedMember = (members as MemberWithUser[]).find(
+          (m: MemberWithUser) => m.user?.name?.toLowerCase().includes(mentionedName.toLowerCase()) && m.userId !== socket.userId,
         );
         if (mentionedMember) {
           createNotification(mentionedMember.userId, 'MENTION', `${senderName} mentioned you`, content.length > 100 ? content.slice(0, 100) + '...' : content, {

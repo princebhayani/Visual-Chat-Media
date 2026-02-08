@@ -56,8 +56,10 @@ export async function listConversations(userId: string, search?: string) {
   });
 
   // Calculate unread counts and pinned status per user
-  return conversations.map((c) => {
-    const userMember = c.members.find((m) => m.userId === userId);
+  type ConvMember = { userId: string; lastReadAt: Date | null };
+  type ConvItem = typeof conversations[number];
+  return conversations.map((c: ConvItem) => {
+    const userMember = c.members.find((m: ConvMember) => m.userId === userId);
     const isPinned = userMember?.isPinned ?? false;
     const lastReadAt = userMember?.lastReadAt;
 
@@ -79,7 +81,7 @@ export async function listConversations(userId: string, search?: string) {
       unreadCount,
       messageCount: c._count.messages,
     };
-  }).sort((a, b) => {
+  }).sort((a: { isPinned?: boolean; updatedAt: Date }, b: { isPinned?: boolean; updatedAt: Date }) => {
     // Pinned first, then by updatedAt
     if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
     return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
@@ -299,7 +301,7 @@ export async function saveMessage(
       ...(attachments && attachments.length > 0
         ? {
             attachments: {
-              create: attachments.map((a) => ({
+              create: attachments.map((a: { fileUrl: string; fileName: string; fileSize: number; mimeType: string; thumbnailUrl?: string; width?: number; height?: number }) => ({
                 fileUrl: a.fileUrl,
                 fileName: a.fileName,
                 fileSize: a.fileSize,

@@ -32,21 +32,23 @@ export async function searchUsers(query: string, currentUserId: string) {
   });
 
   // Filter out blocked users
+  type UserRow = { id: string };
+  type BlockRow = { blockerId: string; blockedId: string };
   const blocks = await prisma.block.findMany({
     where: {
       OR: [
-        { blockerId: currentUserId, blockedId: { in: users.map((u) => u.id) } },
-        { blockedId: currentUserId, blockerId: { in: users.map((u) => u.id) } },
+        { blockerId: currentUserId, blockedId: { in: users.map((u: UserRow) => u.id) } },
+        { blockedId: currentUserId, blockerId: { in: users.map((u: UserRow) => u.id) } },
       ],
     },
   });
 
   const blockedIds = new Set([
-    ...blocks.map((b) => b.blockerId),
-    ...blocks.map((b) => b.blockedId),
+    ...blocks.map((b: BlockRow) => b.blockerId),
+    ...blocks.map((b: BlockRow) => b.blockedId),
   ]);
 
-  return users.filter((u) => !blockedIds.has(u.id));
+  return users.filter((u: UserRow) => !blockedIds.has(u.id));
 }
 
 export async function getUserProfile(userId: string) {
@@ -136,7 +138,8 @@ export async function getBlockedUsers(userId: string) {
     orderBy: { createdAt: 'desc' },
   });
 
-  return blocks.map((b) => ({
+  type BlockWithBlocked = { blocked: { id: string; name: string; email: string; avatarUrl: string | null }; createdAt: Date };
+  return blocks.map((b: BlockWithBlocked) => ({
     ...b.blocked,
     blockedAt: b.createdAt,
   }));

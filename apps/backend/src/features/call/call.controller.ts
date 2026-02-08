@@ -10,7 +10,7 @@ export const getCallHistory = asyncHandler(async (req: Request, res: Response) =
   const calls = await callService.getCallHistory(userId, page, limit);
 
   res.json(
-    calls.map((c) => ({
+    calls.map((c: Awaited<ReturnType<typeof callService.getCallHistory>>[number]) => ({
       id: c.id,
       conversationId: c.conversationId,
       callerId: c.callerId,

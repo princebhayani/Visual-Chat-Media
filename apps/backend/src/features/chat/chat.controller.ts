@@ -7,7 +7,7 @@ import { SOCKET_EVENTS } from '@ai-chat/shared';
 
 // ─── Helper: format message for API response ─────────────────────────────────
 
-function formatMessage(m: any) {
+function formatMessage(m: Record<string, unknown>) {
   return {
     id: m.id,
     content: m.content,
@@ -27,7 +27,8 @@ function formatMessage(m: any) {
   };
 }
 
-function formatConversation(c: any) {
+function formatConversation(c: Record<string, unknown>) {
+  const members = c.members as Array<Record<string, unknown>> | undefined;
   return {
     id: c.id,
     type: c.type,
@@ -37,9 +38,9 @@ function formatConversation(c: any) {
     description: c.description,
     systemPrompt: c.systemPrompt,
     createdById: c.createdById,
-    createdAt: c.createdAt instanceof Date ? c.createdAt.toISOString() : c.createdAt,
-    updatedAt: c.updatedAt instanceof Date ? c.updatedAt.toISOString() : c.updatedAt,
-    members: c.members?.map((m: any) => ({
+    createdAt: c.createdAt instanceof Date ? (c.createdAt as Date).toISOString() : c.createdAt,
+    updatedAt: c.updatedAt instanceof Date ? (c.updatedAt as Date).toISOString() : c.updatedAt,
+    members: members?.map((m: Record<string, unknown>) => ({
       id: m.id,
       conversationId: m.conversationId,
       userId: m.userId,
@@ -47,9 +48,9 @@ function formatConversation(c: any) {
       role: m.role,
       isPinned: m.isPinned,
       isMuted: m.isMuted,
-      lastReadAt: m.lastReadAt instanceof Date ? m.lastReadAt.toISOString() : (m.lastReadAt || null),
-      joinedAt: m.joinedAt instanceof Date ? m.joinedAt.toISOString() : m.joinedAt,
-    })) || [],
+      lastReadAt: m.lastReadAt instanceof Date ? (m.lastReadAt as Date).toISOString() : (m.lastReadAt ?? null),
+      joinedAt: m.joinedAt instanceof Date ? (m.joinedAt as Date).toISOString() : m.joinedAt,
+    })) ?? [],
   };
 }
 
@@ -60,7 +61,8 @@ export const listConversations = asyncHandler(async (req: Request, res: Response
   const search = req.query.search as string | undefined;
   const conversations = await chatService.listConversations(userId, search);
 
-  const formatted = conversations.map((c) => ({
+  type ListConversation = Awaited<ReturnType<typeof chatService.listConversations>>[number];
+  const formatted = conversations.map((c: ListConversation) => ({
     ...formatConversation(c),
     isPinned: c.isPinned,
     lastMessage: c.messages[0]

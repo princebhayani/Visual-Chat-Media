@@ -36,7 +36,7 @@ export const summarizeConversation = asyncHandler(async (req: Request, res: Resp
 
   // Build conversation text
   const conversationText = messages
-    .map((m) => {
+    .map((m: { type: string; sender?: { name: string | null } | null; content: string }) => {
       const sender =
         m.type === 'AI_RESPONSE' ? 'AI' : m.sender?.name || 'Unknown';
       return `${sender}: ${m.content}`;
@@ -83,7 +83,7 @@ export const getSmartReplies = asyncHandler(async (req: Request, res: Response) 
 
   const context = messages
     .reverse()
-    .map((m) => {
+    .map((m: { type: string; sender?: { name: string | null } | null; content: string }) => {
       const sender =
         m.type === 'AI_RESPONSE' ? 'AI' : m.sender?.name || 'Unknown';
       return `${sender}: ${m.content}`;

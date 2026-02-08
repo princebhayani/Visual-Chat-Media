@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { getIO } from '../../lib/socket-io';
 import { SOCKET_EVENTS } from '@ai-chat/shared';
@@ -18,7 +17,7 @@ export async function createNotification(
       type,
       title,
       body,
-      data: data ? (data as Prisma.InputJsonValue) : undefined,
+      data: data ? JSON.parse(JSON.stringify(data)) : undefined,
     },
   });
 
@@ -53,7 +52,7 @@ export async function getNotifications(userId: string, page = 1, limit = 20) {
   ]);
 
   return {
-    notifications: notifications.map((n) => ({
+    notifications: notifications.map((n: { id: string; userId: string; type: string; title: string; body: string; data: unknown; isRead: boolean; createdAt: Date }) => ({
       id: n.id,
       userId: n.userId,
       type: n.type,
