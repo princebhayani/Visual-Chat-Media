@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import path from 'path';
 import { env } from './config/env';
 import { authRouter } from './features/auth/auth.router';
 import { chatRouter } from './features/chat/chat.router';
@@ -23,9 +22,6 @@ export function createApp() {
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
   app.use(rateLimitMiddleware);
-
-  // Static file serving for uploads
-  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
   // Health check
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
